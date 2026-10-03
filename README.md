@@ -280,6 +280,7 @@ HirePath AI is a multi-agent job recommendation system coordinated by LangGraph.
 - **Separation of layers.** `server.py` holds only tool definitions. API calls live in `services/`. Output shapes live in `models.py`.
 - **Typed output.** Tools return Pydantic models, so clients receive a declared output schema and `structuredContent`.
 - **Partial results.** One failing source does not fail a multi-source search.
+- **Parallel sources.** `search_jobs` queries all sources at once in a thread pool and collects results in a fixed order, so a search takes about as long as the slowest source and the merged order stays predictable.
 - **No source bias.** Results alternate between sources before the limit is applied, so one source cannot fill the list.
 - **Incremental adoption.** The direct-API path remains as the default and as a fallback, so enabling MCP is reversible.
 - **Scope.** Resume parsing and matching stay in the application. The server is an integration layer and does not make decisions.
@@ -287,7 +288,6 @@ HirePath AI is a multi-agent job recommendation system coordinated by LangGraph.
 ## Known limitations
 
 - The server process is started once per candidate search (one session for all queries), not kept running between searches.
-- Sources are queried one after another inside the server, so a search takes as long as the three APIs combined.
 - Only the STDIO transport is supported. There is no Streamable HTTP deployment yet.
 - There is no `get_job_details` tool, because none of the three sources provides a detail endpoint in the current code.
 - Arbeitnow matching is word-based, so "Python Developer" also returns non-Python "Developer" roles.

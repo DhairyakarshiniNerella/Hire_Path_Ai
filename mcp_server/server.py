@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server.dedupe import remove_duplicates
@@ -71,11 +73,18 @@ def search_jobs(query: str, location: str = "", limit: int = 20) -> SearchResult
 
     jobs_by_source: dict[str, list[Job]] = {}
     errors: dict[str, str] = {}
-    for name, search in SOURCES.items():
-        try:
-            jobs_by_source[name] = search(query.strip(), location.strip(), limit)
-        except RuntimeError as e:  # one source failing must not fail the whole search
-            errors[name] = str(e)
+    with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
+        # Start every source at once...
+        futures = {
+            name: pool.submit(search, query.strip(), location.strip(), limit)
+            for name, search in SOURCES.items()
+        }
+        # ...then collect in a fixed order so the merged result order is stable.
+        for name, future in futures.items():
+            try:
+                jobs_by_source[name] = future.result()
+            except RuntimeError as e:  # one source failing must not fail the whole search
+                errors[name] = str(e)
 
     jobs = remove_duplicates(_interleave(jobs_by_source))[:limit]
     return SearchResult(source="all", count=len(jobs), jobs=jobs, errors=errors)
