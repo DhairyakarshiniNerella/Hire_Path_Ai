@@ -90,13 +90,13 @@ def search_via_mcp(query: str, location: str = "") -> List[dict]:
 
 
 def _mcp_mode_enabled() -> bool:
-    return os.getenv("JOB_SEARCH_MODE", "direct").lower() == "mcp"
+    return os.getenv("JOB_SEARCH_MODE", "mcp").lower() == "mcp"
 
 
 def search_all_sources(query: str, location: str = "") -> List[dict]:
     """
-    Gets jobs for one search query. JOB_SEARCH_MODE=mcp uses the MCP server;
-    anything else (the default) calls the three job APIs directly.
+    Gets jobs for one search query. Uses the MCP server by default; set
+    JOB_SEARCH_MODE=direct to call the three job APIs directly.
     """
     if _mcp_mode_enabled():
         try:

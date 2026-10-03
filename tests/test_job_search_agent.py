@@ -210,8 +210,17 @@ def test_search_all_sources_falls_back_to_direct_when_mcp_fails(monkeypatch):
     assert job_search_agent.search_all_sources("x") == [{"title": "direct"}]
 
 
-def test_search_all_sources_defaults_to_direct(monkeypatch):
+def test_search_all_sources_defaults_to_mcp(monkeypatch):
     monkeypatch.delenv("JOB_SEARCH_MODE", raising=False)
+    monkeypatch.setattr(job_search_agent, "search_jobs_via_mcp", lambda q, location="": _fake_mcp_result())
+
+    jobs = job_search_agent.search_all_sources("x")
+
+    assert jobs[0]["source"] == "Adzuna"  # came from the MCP result
+
+
+def test_search_all_sources_uses_direct_apis_when_mode_is_direct(monkeypatch):
+    monkeypatch.setenv("JOB_SEARCH_MODE", "direct")
     monkeypatch.setattr(job_search_agent, "search_all_sources_direct", lambda q, location="": [{"title": "direct"}])
 
     assert job_search_agent.search_all_sources("x") == [{"title": "direct"}]

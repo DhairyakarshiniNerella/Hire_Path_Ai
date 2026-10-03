@@ -208,20 +208,21 @@ The suite covers the MCP pieces (duplicate removal, the client path, fallback to
 
 ## Integration with HirePath AI
 
-`backend/app/agents/job_search_agent.py` selects the job source with the `JOB_SEARCH_MODE` environment variable:
+Job search goes through the MCP server by default. `backend/app/agents/job_search_agent.py` reads the `JOB_SEARCH_MODE` environment variable:
 
 | Value | Behavior |
 |---|---|
-| `mcp` | Jobs come from the MCP server through the MCP client. If the server cannot be reached, the problem is logged and the direct APIs are used. |
-| anything else (default) | The original direct API calls. |
+| `mcp` (default) | Jobs come from the MCP server through the MCP client. If the server cannot be reached, the problem is logged and the direct APIs are used. |
+| `direct` | The original direct API calls, with no MCP server involved. |
 
-Enable it before starting the backend:
+Start the backend:
 
 ```powershell
-$env:JOB_SEARCH_MODE = "mcp"
 cd backend
 .\venv\Scripts\python.exe -m app.main
 ```
+
+To bypass MCP, set `$env:JOB_SEARCH_MODE = "direct"` before starting it.
 
 The backend listens on `http://127.0.0.1:5000`. Run it from `backend\` as a module (`-m app.main`); running `main.py` from inside `app\` fails because the `app` package cannot be found.
 
@@ -282,7 +283,7 @@ HirePath AI is a multi-agent job recommendation system coordinated by LangGraph.
 - **Partial results.** One failing source does not fail a multi-source search.
 - **Parallel sources.** `search_jobs` queries all sources at once in a thread pool and collects results in a fixed order, so a search takes about as long as the slowest source and the merged order stays predictable.
 - **No source bias.** Results alternate between sources before the limit is applied, so one source cannot fill the list.
-- **Incremental adoption.** The direct-API path remains as the default and as a fallback, so enabling MCP is reversible.
+- **Incremental adoption.** The direct-API path remains as an opt-out (`JOB_SEARCH_MODE=direct`) and as an automatic fallback, so using MCP is reversible.
 - **Scope.** Resume parsing and matching stay in the application. The server is an integration layer and does not make decisions.
 
 ## Known limitations
