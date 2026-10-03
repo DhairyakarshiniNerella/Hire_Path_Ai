@@ -215,3 +215,36 @@ def test_search_all_sources_defaults_to_direct(monkeypatch):
     monkeypatch.setattr(job_search_agent, "search_all_sources_direct", lambda q, location="": [{"title": "direct"}])
 
     assert job_search_agent.search_all_sources("x") == [{"title": "direct"}]
+
+
+def test_search_jobs_for_candidate_uses_one_mcp_session_for_all_queries(monkeypatch):
+    monkeypatch.setenv("JOB_SEARCH_MODE", "mcp")
+    monkeypatch.setattr(job_search_agent, "generate_search_queries", lambda profile: ["A", "B"])
+    calls = []
+
+    def fake_batch(queries, location=""):
+        calls.append(list(queries))
+        return [_fake_mcp_result(), _fake_mcp_result()]
+
+    monkeypatch.setattr(job_search_agent, "search_jobs_batch_via_mcp", fake_batch)
+
+    result = job_search_agent.search_jobs_for_candidate(CandidateProfile())
+
+    assert calls == [["A", "B"]]  # a single batch call, not one per query
+    assert len(result["jobs"]) == 2
+    assert result["jobs"][0]["skills_required"] == []
+
+
+def test_search_jobs_for_candidate_falls_back_to_direct_when_mcp_batch_fails(monkeypatch):
+    monkeypatch.setenv("JOB_SEARCH_MODE", "mcp")
+    monkeypatch.setattr(job_search_agent, "generate_search_queries", lambda profile: ["A", "B"])
+
+    def broken(queries, location=""):
+        raise RuntimeError("server crashed")
+
+    monkeypatch.setattr(job_search_agent, "search_jobs_batch_via_mcp", broken)
+    monkeypatch.setattr(job_search_agent, "search_all_sources_direct", lambda q, location="": [{"title": q}])
+
+    result = job_search_agent.search_jobs_for_candidate(CandidateProfile())
+
+    assert [j["title"] for j in result["jobs"]] == ["A", "B"]

@@ -219,9 +219,11 @@ Enable it before starting the backend:
 
 ```powershell
 $env:JOB_SEARCH_MODE = "mcp"
-cd backend\app
-python main.py
+cd backend
+.\venv\Scripts\python.exe -m app.main
 ```
+
+The backend listens on `http://127.0.0.1:5000`. Run it from `backend\` as a module (`-m app.main`); running `main.py` from inside `app\` fails because the `app` package cannot be found.
 
 Then open `frontend/index.html` in a browser. Query generation, analysis, matching and the frontend are unchanged. MCP jobs arrive already normalized, and the Job Search Agent adds the two fields the Job Analysis Agent fills in later.
 
@@ -284,7 +286,8 @@ HirePath AI is a multi-agent job recommendation system coordinated by LangGraph.
 
 ## Known limitations
 
-- The client starts a new server process for every search query, which costs about a second each.
+- The server process is started once per candidate search (one session for all queries), not kept running between searches.
+- Sources are queried one after another inside the server, so a search takes as long as the three APIs combined.
 - Only the STDIO transport is supported. There is no Streamable HTTP deployment yet.
 - There is no `get_job_details` tool, because none of the three sources provides a detail endpoint in the current code.
 - Arbeitnow matching is word-based, so "Python Developer" also returns non-Python "Developer" roles.

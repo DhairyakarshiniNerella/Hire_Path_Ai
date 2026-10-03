@@ -6,7 +6,7 @@ from app.models.profile import CandidateProfile
 from app.tools.adzuna_tool import search_adzuna_jobs
 from app.tools.jooble_tool import search_jooble_jobs
 from app.tools.arbeitnow_tool import search_arbeitnow_jobs
-from app.services.mcp_job_client import search_jobs_via_mcp
+from app.services.mcp_job_client import search_jobs_batch_via_mcp, search_jobs_via_mcp
 from app.services.token_tracker import log_usage
 from app.services.groq_client import build_structured_llm
 
@@ -67,13 +67,11 @@ def _log_source_result(source: str, query: str, result: dict) -> None:
         print(f"[job_search] {source} '{query}' FAILED: {result.get('error', 'unknown error')}", flush=True)
 
 
-def search_via_mcp(query: str, location: str = "") -> List[dict]:
+def _jobs_from_mcp_result(query: str, result: dict) -> List[dict]:
     """
-    Asks the HirePath job MCP server for jobs. The server already normalizes and
-    de-duplicates, so the jobs come back in HirePath's common shape; we only add
-    the two fields the Job Analysis Agent fills in later.
+    The server already normalizes and de-duplicates, so jobs arrive in HirePath's
+    common shape; we only add the two fields the Job Analysis Agent fills in later.
     """
-    result = search_jobs_via_mcp(query, location=location)
     for source, error in result["errors"].items():
         print(f"[job_search] mcp {source} '{query}' FAILED: {error}", flush=True)
     print(f"[job_search] mcp '{query}': {result['count']} job(s)", flush=True)
@@ -86,12 +84,21 @@ def search_via_mcp(query: str, location: str = "") -> List[dict]:
     return jobs
 
 
+def search_via_mcp(query: str, location: str = "") -> List[dict]:
+    """Asks the HirePath job MCP server for jobs for ONE query."""
+    return _jobs_from_mcp_result(query, search_jobs_via_mcp(query, location=location))
+
+
+def _mcp_mode_enabled() -> bool:
+    return os.getenv("JOB_SEARCH_MODE", "direct").lower() == "mcp"
+
+
 def search_all_sources(query: str, location: str = "") -> List[dict]:
     """
     Gets jobs for one search query. JOB_SEARCH_MODE=mcp uses the MCP server;
     anything else (the default) calls the three job APIs directly.
     """
-    if os.getenv("JOB_SEARCH_MODE", "direct").lower() == "mcp":
+    if _mcp_mode_enabled():
         try:
             return search_via_mcp(query, location)
         except Exception as e:
@@ -141,6 +148,18 @@ def search_jobs_for_candidate(candidate_profile: CandidateProfile, location: str
     queries = generate_search_queries(candidate_profile)
 
     all_jobs = []
+    if queries and _mcp_mode_enabled():
+        # One MCP session for all queries instead of one server process per query.
+        try:
+            results = search_jobs_batch_via_mcp(queries, location=location)
+            for query, result in zip(queries, results):
+                all_jobs.extend(_jobs_from_mcp_result(query, result))
+            return {"search_queries": queries, "jobs": all_jobs}
+        except Exception as e:
+            print(f"[job_search] MCP unavailable ({e}); falling back to direct APIs", flush=True)
+            all_jobs = [job for query in queries for job in search_all_sources_direct(query, location)]
+            return {"search_queries": queries, "jobs": all_jobs}
+
     for query in queries:
         all_jobs.extend(search_all_sources(query, location=location))
 
