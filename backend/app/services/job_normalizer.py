@@ -56,6 +56,8 @@ NORMALIZERS = {
 
 def normalize_job(job: dict) -> Optional[dict]:
     """Normalizes a single raw job dict based on its '_source' tag. Returns None if unrecognized."""
+    if "_source" not in job and job.get("source"):
+        return job  # already normalized, e.g. returned by the MCP job server
     source = job.get("_source")
     normalizer = NORMALIZERS.get(source)
     if not normalizer:

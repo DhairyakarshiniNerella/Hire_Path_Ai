@@ -1,3 +1,4 @@
+import os
 from typing import List
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -5,6 +6,7 @@ from app.models.profile import CandidateProfile
 from app.tools.adzuna_tool import search_adzuna_jobs
 from app.tools.jooble_tool import search_jooble_jobs
 from app.tools.arbeitnow_tool import search_arbeitnow_jobs
+from app.services.mcp_job_client import search_jobs_via_mcp
 from app.services.token_tracker import log_usage
 from app.services.groq_client import build_structured_llm
 
@@ -65,7 +67,40 @@ def _log_source_result(source: str, query: str, result: dict) -> None:
         print(f"[job_search] {source} '{query}' FAILED: {result.get('error', 'unknown error')}", flush=True)
 
 
+def search_via_mcp(query: str, location: str = "") -> List[dict]:
+    """
+    Asks the HirePath job MCP server for jobs. The server already normalizes and
+    de-duplicates, so the jobs come back in HirePath's common shape; we only add
+    the two fields the Job Analysis Agent fills in later.
+    """
+    result = search_jobs_via_mcp(query, location=location)
+    for source, error in result["errors"].items():
+        print(f"[job_search] mcp {source} '{query}' FAILED: {error}", flush=True)
+    print(f"[job_search] mcp '{query}': {result['count']} job(s)", flush=True)
+
+    jobs = []
+    for job in result["jobs"]:
+        job["experience_required"] = "Unknown"
+        job["skills_required"] = []
+        jobs.append(job)
+    return jobs
+
+
 def search_all_sources(query: str, location: str = "") -> List[dict]:
+    """
+    Gets jobs for one search query. JOB_SEARCH_MODE=mcp uses the MCP server;
+    anything else (the default) calls the three job APIs directly.
+    """
+    if os.getenv("JOB_SEARCH_MODE", "direct").lower() == "mcp":
+        try:
+            return search_via_mcp(query, location)
+        except Exception as e:
+            print(f"[job_search] MCP unavailable ({e}); falling back to direct APIs", flush=True)
+
+    return search_all_sources_direct(query, location)
+
+
+def search_all_sources_direct(query: str, location: str = "") -> List[dict]:
     """
     Calls all three job APIs for one search query and combines the results.
     Each job dict is tagged with which source it came from.

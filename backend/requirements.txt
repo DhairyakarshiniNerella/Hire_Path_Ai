@@ -11,3 +11,4 @@ langchain
 requests
 fastembed
 gunicorn
+mcp<2

@@ -1,132 +1,296 @@
-# HirePath AI
+# HirePath AI MCP
 
-**HirePath AI** is a multi-agent Agentic AI job recommendation platform. It analyzes a candidate's resume to understand their skills, experience, education, projects, and career goals, then uses a team of specialized AI agents — coordinated by **LangGraph** — to search live job APIs, analyze job requirements, compare them against the candidate's profile using deterministic scoring and semantic embeddings, identify skill gaps, and generate explainable, personalized job recommendations.
+A Model Context Protocol (MCP) server that exposes job search as standard tools, together with **HirePath AI**, the multi-agent job-matching application that consumes it.
 
-## Why this project exists
+HirePath AI reads a candidate's resume, searches for jobs, analyzes them, and ranks them against the candidate's profile. This repository moves the job-search integrations (Adzuna, Jooble, Arbeitnow) out of the application and behind an MCP server. The application talks to one standard interface and receives normalized job data. It no longer needs to know how each source works.
 
-Most "AI resume matcher" demos are a single LLM prompt wrapped in a UI. HirePath AI is different: it's built as a genuine **multi-agent system**, where a Supervisor agent orchestrates specialized agents through a shared state graph, each with a distinct responsibility, using real external tools (job search APIs) and a deterministic (non-hallucinated) scoring engine underneath the LLM's natural-language explanations.
+## Contents
+
+- [Why MCP](#why-mcp)
+- [Architecture](#architecture)
+- [MCP tools](#mcp-tools)
+- [Job sources](#job-sources)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Testing](#testing)
+- [Integration with HirePath AI](#integration-with-hirepath-ai)
+- [The HirePath AI application](#the-hirepath-ai-application)
+- [Project structure](#project-structure)
+- [Design notes](#design-notes)
+- [Known limitations](#known-limitations)
+- [License](#license)
+
+## Why MCP
+
+Each job source has its own authentication, request format and response schema. Before MCP, HirePath AI called these APIs directly, so source-specific code lived inside the application.
+
+With MCP:
+
+- The job-search capability is **modular**: it can change or grow without touching the application.
+- It is **reusable**: any MCP-compatible client can call the same tools.
+- The application works with **one common job shape** instead of three.
+
+MCP does not replace the REST APIs. The server still calls Adzuna, Jooble and Arbeitnow over HTTP. MCP is the standard, AI-facing interface placed in front of them.
 
 ## Architecture
 
-```
-                    USER
-                      |
-              HTML / CSS / JavaScript
-                      |
-                    Flask
-                      |
-              Supervisor Agent (LangGraph)
-                      |
-    ┌─────────────┬───────────────┬──────────────┬─────────────┐
-    ↓             ↓               ↓               ↓             ↓
-Resume       Job Search      Job Analysis     Matching     Recommendation
-Analyzer        Agent           Agent           Agent          Agent
-Agent            |               |               |              |
-    |      ┌──────┼──────┐        |         Deterministic         |
-    |      ↓      ↓      ↓        |         Python scoring    LLM explains
-    |   Adzuna Jooble Arbeitnow   LLM extracts     +          the results
-    |                          requirements    MiniLM (ONNX)     (no score
-Groq LLM                       from job text    embeddings      invention)
-extracts                       (skills, exp,   for semantic
-structured                     education...)    similarity
-profile
+```text
+Resume -> Resume Parser -> Candidate Profile
+                                 |
+                          Job Search Agent        (generates queries with an LLM)
+                                 |
+                            MCP client            backend/app/services/mcp_job_client.py
+                                 |  MCP over STDIO
+                          Job MCP server          mcp_server/server.py
+                                 |
+                  search_jobs / search_jobs_by_source
+                                 |
+              Adzuna service | Jooble service | Arbeitnow service
+                                 |
+                    normalize -> interleave -> de-duplicate
+                                 |
+                          normalized jobs
+                                 |
+              HirePath AI: Job Analysis -> Matching -> Recommendations
 ```
 
-Every agent reads from and writes to one shared `WorkflowState` object. The **Supervisor** doesn't do any work itself — it inspects the state after each agent runs and decides which agent runs next (a classic LangGraph "supervisor pattern"), which is what makes this a real graph rather than a hardcoded pipeline.
+**Responsibilities**
 
-## Tech Stack
+| MCP server | HirePath AI |
+|---|---|
+| Source API calls, authentication, timeouts, rate-limit handling | Resume parsing |
+| Normalizing each source to one `Job` shape | LLM generation of search queries |
+| Removing duplicates and mixing sources fairly | Job analysis, matching, recommendations |
+| Input validation and per-source error reporting | Deciding when and what to search |
 
-| Layer | Technology | Why |
+The server does not know what the candidate wants. The agent decides that and calls the tools.
+
+**Request flow**
+
+1. The Job Search Agent generates search queries from the candidate profile.
+2. For each query, the MCP client starts the server (STDIO), initializes a session and calls `search_jobs`.
+3. The server queries every source, normalizes the results, interleaves them, removes duplicates and applies the limit.
+4. The result returns to HirePath AI as structured content, and the existing analysis and matching pipeline continues.
+
+## MCP tools
+
+| Tool | Arguments | Description |
 |---|---|---|
-| Frontend | HTML, CSS | No framework overhead; `fetch()` talks directly to Flask |
-| Backend | Flask (Python) | Simple, well-understood REST API layer |
-| Agent Orchestration | LangGraph | Shared state graph, conditional routing between agents |
-| LLM Reasoning | LangChain + Groq (`openai/gpt-oss-20b`) | Free, fast inference for structured extraction and explanations |
-| Semantic Similarity | `sentence-transformers/all-MiniLM-L6-v2` via `fastembed` (ONNX) | Free, local embeddings — no per-call cost, low enough memory for small hosts |
-| Job Data | Adzuna API, Jooble API, Arbeitnow API | Three legitimate, documented, free job sources |
-| Resume Parsing | `pypdf`, `python-docx` | Extracts text from PDF/DOCX resumes |
-| Data Validation | Pydantic | Enforces structured, type-safe LLM output |
+| `search_jobs` | `query`, `location=""`, `limit=20` | Searches all sources and returns one merged, de-duplicated list. If a source fails, the other sources' jobs are still returned and the failure is listed in `errors`. |
+| `search_jobs_by_source` | `source`, `query`, `location=""`, `limit=10` | Searches a single source: `adzuna`, `jooble` or `arbeitnow`. A failure is returned as a tool error. |
+| `ping` | `message="hello"` | Connectivity test. |
 
-## The Agents
+Input is validated: an empty `query`, a `limit` outside 1-50, or an unknown `source` is rejected with a tool error.
 
-1. **Supervisor Agent** — inspects shared state, decides which agent runs next, and safely halts on errors.
-2. **Resume Analyzer Agent** — uses Groq to turn raw resume text into a structured `CandidateProfile` (skills, experience, education, target roles, etc.), with strict "don't invent missing data" instructions.
-3. **Job Search Agent** — uses Groq to generate realistic search queries from the candidate's profile, then calls all 3 job APIs as tools.
-4. **Job Analysis Agent** — uses Groq to extract each job's real requirements (skills, education, role, technologies, responsibilities) from raw description text.
-5. **Matching Agent** — combines skill matching, experience compatibility, semantic role/project similarity, and education relevance into one weighted match score, using **pure deterministic Python** — the LLM never invents this number.
-6. **Recommendation Agent** — takes the already-scored, already-ranked jobs and asks Groq to explain *why* each one matches, in plain language, without changing any of the underlying numbers.
+### Example call
 
-## Why deterministic scoring (not LLM-scored)?
+Request, sent by the client as JSON-RPC over STDIO:
 
-LLMs are unreliable at producing consistent, comparable numeric scores. HirePath AI computes the match score with fixed, auditable Python logic — weighted 35% skills / 25% experience / 20% role / 10% projects / 10% education — and only asks the LLM to *narrate* that result. This makes every recommendation explainable and reproducible.
-
-## Experience Compatibility
-
-A dedicated regex-based parser recognizes real-world phrasing ("Fresher", "0-2 years", "3+ years", "Minimum 2 years", etc.) and compares it against the candidate's actual experience, producing one of: **Compatible**, **Low**, **Overqualified**, or **Unknown** — never a guessed number when a job posting doesn't state a clear requirement.
-
-## Project Structure
-
-```
-HirePath AI/
-├── backend/
-│   ├── app/
-│   │   ├── main.py                 
-│   │   ├── agents/                 # The 6 specialized agents
-│   │   ├── tools/                  # Resume parser + job API clients
-│   │   ├── services/               # Normalization, dedup, matching, embeddings
-│   │   ├── models/                 # Pydantic CandidateProfile model
-│   │   └── graph/                  # LangGraph state + workflow definition
-│   ├── requirements.txt
-│   └── .env                        # API keys (never committed)
-├── frontend/
-│   ├── index.html
-│   ├── style.css
-│   └── script.js
-├── tests/
-└── README.md
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "search_jobs",
+    "arguments": { "query": "Python Developer", "location": "", "limit": 5 }
+  }
+}
 ```
 
-## Running it locally
+Result, returned in `structuredContent`:
 
-**Prerequisites:** Python 3.10+, free API keys for [Groq](https://console.groq.com), [Adzuna](https://developer.adzuna.com), and [Jooble](https://jooble.org/api/about) (Arbeitnow needs no key).
+```json
+{
+  "source": "all",
+  "count": 1,
+  "jobs": [
+    {
+      "title": "Python Developer",
+      "company": "Blumetra",
+      "location": "Hyderabad, Telangana",
+      "description": "...",
+      "url": "https://...",
+      "source": "Adzuna",
+      "source_id": "123456",
+      "employment_type": "full_time"
+    }
+  ],
+  "errors": { "jooble": "Jooble rejected the API key" }
+}
+```
+
+`errors` maps a source name to its error message and is empty when every source succeeded. The job shape is the same for every source.
+
+### Error handling
+
+| Situation | Behavior |
+|---|---|
+| Missing or invalid API key, timeout, rate limit, HTTP error | `search_jobs`: that source is skipped and reported in `errors`. `search_jobs_by_source`: returned as a tool error. |
+| One source fails, others work | The working sources' jobs are returned. |
+| No results | An empty `jobs` list with `count: 0`. |
+| Empty query, bad `limit`, unknown source | Rejected before any API call. |
+| API keys | Never included in error messages (the Jooble key is part of its URL). |
+
+## Job sources
+
+| Source | Credentials | Notes |
+|---|---|---|
+| Adzuna | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | Country defaults to `in`; change with `ADZUNA_COUNTRY`. |
+| Jooble | `JOOBLE_API_KEY` | The API has no limit parameter, so results are trimmed after the call. |
+| Arbeitnow | none | The API has no search; the server filters locally by words in the title and tags. |
+
+All three are free to use.
+
+## Getting started
+
+**Prerequisites:** Python 3.10 or newer. Free API keys for [Adzuna](https://developer.adzuna.com) and [Jooble](https://jooble.org/api/about). Arbeitnow needs no key. Running the full application also needs a [Groq](https://console.groq.com) key.
+
+**MCP server only**
 
 ```powershell
-# 1. Set up the backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install "mcp<2" requests python-dotenv pydantic
+```
+
+**Full application** (the backend requirements include the MCP client and server dependencies)
+
+```powershell
 cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
 
-# 2. Add your API keys
-# Create backend/.env with:
-#   GROQ_API_KEY=...
-#   GROQ_API_KEY_2=...   (optional - a second free Groq key, used as an
-#                          automatic fallback once GROQ_API_KEY's daily
-#                          quota is exhausted)
-#   ADZUNA_APP_ID=...
-#   ADZUNA_APP_KEY=...
-#   JOOBLE_API_KEY=...
+`mcp` is pinned below 2.0 because MCP SDK 2.x renamed `FastMCP`, which the server uses.
 
-# 3. Run the backend
-cd app
+## Configuration
+
+Create `mcp_server/.env` from the template and add your keys:
+
+```powershell
+Copy-Item mcp_server\.env.example mcp_server\.env
+```
+
+```text
+ADZUNA_APP_ID=
+ADZUNA_APP_KEY=
+JOOBLE_API_KEY=
+# Optional: ADZUNA_COUNTRY=in
+```
+
+`.env` files are gitignored. Never commit real keys.
+
+The server reads its own `.env`. MCP clients pass only a small set of environment variables to a server subprocess, so keys exported in the client's shell do not reach it.
+
+The full application additionally reads `backend/.env` (`GROQ_API_KEY`, optional `GROQ_API_KEY_2` as a quota fallback).
+
+## Usage
+
+The server uses the **STDIO** transport: a client starts it as a subprocess, so you normally do not run it by hand. To try it, use the included client from the repository root:
+
+```powershell
+python -m mcp_server.dev_client
+```
+
+It starts the server, lists the tools, calls `ping` and `search_jobs`, and prints the results. Always run the server as a module (`python -m mcp_server.server`) from the repository root. Running `python mcp_server/server.py` directly fails because its package imports cannot be resolved.
+
+## Testing
+
+```powershell
+# from the repository root, with the backend virtual environment active
+python -m pytest tests -q
+```
+
+The suite covers the MCP pieces (duplicate removal, the client path, fallback to direct APIs) along with the existing application tests. The live test client above exercises the real server and APIs.
+
+## Integration with HirePath AI
+
+`backend/app/agents/job_search_agent.py` selects the job source with the `JOB_SEARCH_MODE` environment variable:
+
+| Value | Behavior |
+|---|---|
+| `mcp` | Jobs come from the MCP server through the MCP client. If the server cannot be reached, the problem is logged and the direct APIs are used. |
+| anything else (default) | The original direct API calls. |
+
+Enable it before starting the backend:
+
+```powershell
+$env:JOB_SEARCH_MODE = "mcp"
+cd backend\app
 python main.py
 ```
 
-Then open `frontend/index.html` directly in your browser.
+Then open `frontend/index.html` in a browser. Query generation, analysis, matching and the frontend are unchanged. MCP jobs arrive already normalized, and the Job Search Agent adds the two fields the Job Analysis Agent fills in later.
 
-## Known Limitations
+## The HirePath AI application
 
-- Groq's free tier caps usage at 8000 tokens/minute and 200,000 tokens/day, either of which can be hit during heavy testing. The app surfaces this as a clear, friendly error (with an estimated wait time) rather than crashing, and can optionally fall back to a second Groq key (`GROQ_API_KEY_2`) with its own separate quota if one is configured.
-- Job analysis is capped to 15 unique jobs per search to control LLM call volume.
-- Agent progress in the UI is a simulated visual reveal, not a true real-time stream (no WebSockets/SSE yet — see Future Improvements).
+HirePath AI is a multi-agent job recommendation system coordinated by LangGraph. A Supervisor agent inspects a shared workflow state and routes work to specialized agents:
 
-## Future Improvements
+1. **Resume Analyzer** turns resume text (PDF or DOCX) into a structured candidate profile using an LLM, without inventing missing data.
+2. **Job Search** generates search queries from the profile and retrieves jobs, directly or through MCP.
+3. **Job Analysis** extracts each job's requirements from its description.
+4. **Matching** computes a weighted score (skills 35%, experience 25%, role 20%, projects 10%, education 10%) with deterministic Python and semantic embeddings. The LLM does not produce this number.
+5. **Recommendation** explains each ranked match in plain language without changing the scores.
 
-- Real-time agent progress via Server-Sent Events or WebSockets
-- Persistent storage of past searches/recommendations
-- Retry-with-backoff for rate-limited LLM calls
-- A 4th/5th job source for broader coverage
+| Layer | Technology |
+|---|---|
+| Frontend | HTML, CSS, JavaScript |
+| Backend | Flask |
+| Orchestration | LangGraph, LangChain |
+| LLM | Groq (free tier) |
+| Embeddings | `all-MiniLM-L6-v2` through `fastembed` (ONNX, local) |
+| Resume parsing | `pypdf`, `python-docx` |
+| Validation | Pydantic |
+| Job tools | MCP server (Adzuna, Jooble, Arbeitnow) |
+
+## Project structure
+
+```text
+.
+├── mcp_server/                  # MCP server
+│   ├── server.py                # tool definitions
+│   ├── models.py                # Job, SearchResult
+│   ├── dedupe.py                # duplicate removal
+│   ├── config.py                # reads mcp_server/.env
+│   ├── dev_client.py            # terminal test client
+│   ├── .env.example
+│   └── services/
+│       ├── adzuna.py
+│       ├── jooble.py
+│       └── arbeitnow.py
+├── backend/                     # HirePath AI (Flask + LangGraph)
+│   └── app/
+│       ├── agents/              # supervisor and specialized agents
+│       ├── graph/               # workflow state and graph
+│       ├── services/            # normalizer, matcher, embeddings, MCP client
+│       ├── tools/               # resume parser, direct job API clients
+│       └── models/              # CandidateProfile
+├── frontend/
+├── tests/
+└── README.md
+```
+
+## Design notes
+
+- **Separation of layers.** `server.py` holds only tool definitions. API calls live in `services/`. Output shapes live in `models.py`.
+- **Typed output.** Tools return Pydantic models, so clients receive a declared output schema and `structuredContent`.
+- **Partial results.** One failing source does not fail a multi-source search.
+- **No source bias.** Results alternate between sources before the limit is applied, so one source cannot fill the list.
+- **Incremental adoption.** The direct-API path remains as the default and as a fallback, so enabling MCP is reversible.
+- **Scope.** Resume parsing and matching stay in the application. The server is an integration layer and does not make decisions.
+
+## Known limitations
+
+- The client starts a new server process for every search query, which costs about a second each.
+- Only the STDIO transport is supported. There is no Streamable HTTP deployment yet.
+- There is no `get_job_details` tool, because none of the three sources provides a detail endpoint in the current code.
+- Arbeitnow matching is word-based, so "Python Developer" also returns non-Python "Developer" roles.
+- Groq's free tier limits tokens per minute and per day. The application reports this as a friendly error.
+- Job analysis is capped at 15 unique jobs per search.
 
 ## License
 
-This project was built for educational/portfolio purposes.
+Built for educational and portfolio purposes.

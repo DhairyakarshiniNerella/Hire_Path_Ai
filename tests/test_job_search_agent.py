@@ -174,3 +174,44 @@ def test_search_jobs_for_candidate_no_queries_returns_no_jobs(monkeypatch):
     result = job_search_agent.search_jobs_for_candidate(CandidateProfile())
 
     assert result == {"search_queries": [], "jobs": []}
+
+
+# ---------- MCP mode ----------
+
+def _fake_mcp_result():
+    return {
+        "source": "all", "count": 1, "errors": {"jooble": "timeout"},
+        "jobs": [{"title": "Python Developer", "company": "Acme", "location": "Pune",
+                  "description": "d", "url": "u", "source": "Adzuna", "source_id": "1",
+                  "employment_type": "full_time"}],
+    }
+
+
+def test_search_all_sources_uses_mcp_when_mode_is_mcp(monkeypatch):
+    monkeypatch.setenv("JOB_SEARCH_MODE", "mcp")
+    monkeypatch.setattr(job_search_agent, "search_jobs_via_mcp", lambda q, location="": _fake_mcp_result())
+
+    jobs = job_search_agent.search_all_sources("Python Developer")
+
+    assert len(jobs) == 1
+    assert jobs[0]["experience_required"] == "Unknown"
+    assert jobs[0]["skills_required"] == []
+
+
+def test_search_all_sources_falls_back_to_direct_when_mcp_fails(monkeypatch):
+    monkeypatch.setenv("JOB_SEARCH_MODE", "mcp")
+
+    def broken(q, location=""):
+        raise RuntimeError("server crashed")
+
+    monkeypatch.setattr(job_search_agent, "search_jobs_via_mcp", broken)
+    monkeypatch.setattr(job_search_agent, "search_all_sources_direct", lambda q, location="": [{"title": "direct"}])
+
+    assert job_search_agent.search_all_sources("x") == [{"title": "direct"}]
+
+
+def test_search_all_sources_defaults_to_direct(monkeypatch):
+    monkeypatch.delenv("JOB_SEARCH_MODE", raising=False)
+    monkeypatch.setattr(job_search_agent, "search_all_sources_direct", lambda q, location="": [{"title": "direct"}])
+
+    assert job_search_agent.search_all_sources("x") == [{"title": "direct"}]

@@ -201,3 +201,9 @@ def test_select_balanced_jobs_missing_source_field_still_works():
     jobs = [{"title": "no source"} for _ in range(3)]
     result = select_balanced_jobs(jobs, limit=2)
     assert len(result) == 2
+
+
+def test_normalize_job_passes_through_already_normalized_job():
+    from app.services.job_normalizer import normalize_job
+    job = {"title": "Python Developer", "source": "Adzuna", "source_id": "1"}
+    assert normalize_job(job) is job
