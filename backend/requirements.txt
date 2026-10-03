@@ -1,0 +1,13 @@
+Flask
+flask-cors
+pypdf
+python-docx
+pytest
+pydantic
+python-dotenv
+langchain-groq
+langgraph
+langchain
+requests
+fastembed
+gunicorn

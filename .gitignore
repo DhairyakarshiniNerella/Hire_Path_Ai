@@ -1,0 +1,22 @@
+# Secrets - NEVER commit these
+.env
+
+# Python virtual environment
+venv/
+.venv/
+
+# Node dependencies (frontend test tooling)
+node_modules/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Uploaded resumes (personal data)
+uploads/
+
+# VS Code settings
+.vscode/
+
+# Windows files
+Thumbs.db

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HirePath AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="bg-blobs" aria-hidden="true"></div>
+
+    <!-- Small floating status pill: auto-checks the backend on page load -->
+    <div id="backend-status" class="backend-status">
+        <span id="backend-status-dot" class="status-dot"></span>
+        <span id="backend-status-text">Checking backend…</span>
+    </div>
+
+    <button id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+
+    <header class="hero">
+        <div class="hero-inner">
+            <div class="badge">🤖 Multi-Agent Agentic AI</div>
+            <h1>Find your next role with<br><span class="gradient-text">HirePath AI</span></h1>
+            <p class="hero-sub">
+                Upload your resume. Six specialized AI agents analyze your profile, search live job
+                boards, and rank the best matches — with real explanations, not black-box scores.
+            </p>
+
+            <div class="stats-row">
+                <div class="stat"><strong>6</strong><span>AI Agents</span></div>
+                <div class="stat"><strong>3</strong><span>Job Sources</span></div>
+                <div class="stat"><strong>100%</strong><span>Explainable</span></div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Upload card, front and center -->
+        <section class="card upload-card">
+            <div class="card-heading">
+                <span class="card-icon">📄</span>
+                <h2>Upload Your Resume</h2>
+            </div>
+
+            <div id="dropzone" class="dropzone">
+                <span class="dropzone-icon">⬆️</span>
+                <p class="dropzone-text" id="file-drop-label">
+                    Drag &amp; drop your resume, or <span class="dropzone-browse">browse</span>
+                </p>
+                <p class="hint">PDF or DOCX</p>
+                <input type="file" id="resume-input" accept=".pdf,.docx" hidden>
+            </div>
+
+            <button id="analyze-btn">Analyze Resume →</button>
+            <p id="status-message"></p>
+        </section>
+
+        <!-- Static showcase of the agent architecture - visible even before upload -->
+        <section class="agents-showcase">
+            <h2 class="section-title">Meet Your AI Agents</h2>
+            <p class="section-sub">
+                A LangGraph Supervisor coordinates six specialized agents to turn your resume into
+                ranked, explained job recommendations.
+            </p>
+            <div class="agents-grid">
+                <div class="agent-showcase-card">
+                    <span class="agent-showcase-icon">📄</span>
+                    <h3>Resume Analyzer</h3>
+                    <p>Extracts skills, experience, education, and target roles from your resume.</p>
+                </div>
+                <div class="agent-showcase-card">
+                    <span class="agent-showcase-icon">🔍</span>
+                    <h3>Job Search</h3>
+                    <p>Generates smart search queries and pulls live listings from three job APIs.</p>
+                </div>
+                <div class="agent-showcase-card">
+                    <span class="agent-showcase-icon">🔎</span>
+                    <h3>Job Analysis</h3>
+                    <p>Reads each posting to extract real requirements — skills, education, and role.</p>
+                </div>
+                <div class="agent-showcase-card">
+                    <span class="agent-showcase-icon">🎯</span>
+                    <h3>Matching</h3>
+                    <p>Scores every job deterministically — skills, experience, role &amp; project fit.</p>
+                </div>
+                <div class="agent-showcase-card">
+                    <span class="agent-showcase-icon">✨</span>
+                    <h3>Recommendation</h3>
+                    <p>Explains in plain language why each job matches and where the gaps are.</p>
+                </div>
+                <div class="agent-showcase-card">
+                    <span class="agent-showcase-icon">🧭</span>
+                    <h3>Supervisor</h3>
+                    <p>Coordinates every agent above through a shared, conditionally-routed state graph.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Agent progress checklist - shows while the workflow is running -->
+        <section id="agent-progress" class="card hidden">
+            <div class="card-heading">
+                <span class="card-icon">🤖</span>
+                <h2>Agent Progress</h2>
+            </div>
+            <div class="progress-bar-track">
+                <div id="progress-bar-fill" class="progress-bar-fill"></div>
+            </div>
+            <ul id="agent-progress-list"></ul>
+        </section>
+
+        <!-- Candidate profile section - hidden until we have real data -->
+        <section id="profile-section" class="card hidden">
+            <div class="card-heading">
+                <span class="card-icon">🧑‍💼</span>
+                <h2>Candidate Profile</h2>
+            </div>
+            <div class="profile-grid">
+                <p><strong>Name</strong><span id="profile-name"></span></p>
+                <p><strong>Career Level</strong><span id="profile-career-level"></span></p>
+                <p><strong>Total Experience</strong><span id="profile-experience"></span></p>
+                <p class="span-2"><strong>Education</strong><span id="profile-education"></span></p>
+                <p class="span-2"><strong>Skills</strong><span id="profile-skills"></span></p>
+                <p class="span-2"><strong>Projects</strong><span id="profile-projects"></span></p>
+                <p class="span-2"><strong>Target Roles</strong><span id="profile-target-roles"></span></p>
+            </div>
+        </section>
+
+        <!-- Job recommendations render here -->
+        <div id="recommendations-section">
+            <div class="card empty-state initial-placeholder">
+                <span class="empty-icon">🚀</span>
+                <p>Upload your resume above to see personalized, AI-ranked job recommendations appear here.</p>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>Built with LangGraph, Groq, and Hugging Face embeddings.</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
