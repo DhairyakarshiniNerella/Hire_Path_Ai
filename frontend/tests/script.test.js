@@ -462,19 +462,60 @@ describe("analyze button click flow", () => {
     });
   });
 
-  it("shows a connectivity message when the backend is unreachable", async () => {
+  it("shows a connectivity message when the backend stays unreachable", async () => {
     selectFile();
     vi.stubGlobal("fetch", () => Promise.reject(new Error("network down")));
 
     document.getElementById("analyze-btn").click();
+    for (let i = 0; i < 20; i++) await vi.advanceTimersByTimeAsync(5000);
 
     await vi.waitFor(() => {
-      expect(document.getElementById("status-message").textContent).toBe(
-        "Could not reach the backend. Is Flask running?"
-      );
+      expect(document.getElementById("status-message").textContent).toContain("Could not reach the backend");
     });
 
     expect(document.getElementById("status-message").classList.contains("error")).toBe(true);
     expect(document.getElementById("analyze-btn").disabled).toBe(false);
   });
+
+  it("retries the start request while the backend wakes up (HTML 502 page)", async () => {
+    selectFile();
+    let starts = 0;
+    vi.stubGlobal("fetch", (url) => {
+      if (url.endsWith("/api/resume/start")) {
+        starts += 1;
+        if (starts <= 2) {
+          return Promise.resolve({ ok: false, status: 502, json: () => Promise.reject(new SyntaxError("not json")) });
+        }
+        return fakeFetchResponse(true, { job_id: "abc" });
+      }
+      return fakeFetchResponse(true, { status: "done", http_status: 200, result: { status: "ok", search_via: "mcp", candidate_profile: { name: "Jane Doe" }, recommendations: [] } });
+    });
+
+    document.getElementById("analyze-btn").click();
+    for (let i = 0; i < 4; i++) await vi.advanceTimersByTimeAsync(5000);
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("profile-name").textContent).toBe("Jane Doe");
+    });
+    expect(starts).toBe(3);
+  });
+
+  it("keeps polling through a longer connection loss", async () => {
+    selectFile();
+    let polls = 0;
+    vi.stubGlobal("fetch", (url) => {
+      if (url.endsWith("/api/resume/start")) return fakeFetchResponse(true, { job_id: "abc" });
+      polls += 1;
+      if (polls <= 10) return Promise.reject(new Error("offline"));
+      return fakeFetchResponse(true, { status: "done", http_status: 200, result: { status: "ok", search_via: "mcp", candidate_profile: { name: "Jane Doe" }, recommendations: [] } });
+    });
+
+    document.getElementById("analyze-btn").click();
+    for (let i = 0; i < 12; i++) await vi.advanceTimersByTimeAsync(3000);
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("profile-name").textContent).toBe("Jane Doe");
+    });
+  });
+
 });

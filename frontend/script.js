@@ -257,38 +257,66 @@ function createEl(tag, className, text) {
 
 // The analysis takes 1-2 minutes. One request held open that long gets cut by many networks,
 // so the backend returns a job id right away and we check on it with short requests.
+// Phones are the hard case: a sleeping free-tier backend answers with an HTML 502 page while
+// it wakes (30-60s), and mobile browsers drop requests when the tab is backgrounded or the
+// network switches. So both calls are retried instead of failing on the first hiccup.
 const POLL_INTERVAL_MS = 3000;
 const POLL_MAX_MS = 10 * 60 * 1000;
-const POLL_MAX_CONSECUTIVE_FAILURES = 5;
+const RETRY_INTERVAL_MS = 5000;
+const START_RETRY_MS = 90 * 1000;          // how long to keep trying to start (backend waking up)
+const POLL_MAX_FAILURE_MS = 90 * 1000;     // how long polls may fail in a row before giving up
+const RETRYABLE_STATUSES = [502, 503, 504];
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// fetch + parse JSON. Throws on a network error or a non-JSON reply (e.g. a gateway's HTML error page).
+async function fetchJson(url, options) {
+    const response = await fetch(url, options);
+    const body = await response.json();
+    return { response, body };
+}
+
+async function startAnalysis(formData) {
+    const retryDeadline = Date.now() + START_RETRY_MS;
+    while (true) {
+        try {
+            const { response, body } = await fetchJson(`${API_BASE_URL}/api/resume/start`, {
+                method: "POST",
+                body: formData,
+            });
+            if (!RETRYABLE_STATUSES.includes(response.status)) return { response, body };
+        } catch (error) {
+            if (Date.now() >= retryDeadline) throw error;
+        }
+        if (Date.now() >= retryDeadline) {
+            throw new Error("The backend did not wake up in time");
+        }
+        await sleep(RETRY_INTERVAL_MS);
+    }
+}
+
 // Resolves to { ok, data }. Throws only if the backend can't be reached at all.
 async function analyzeResume(formData) {
-    const startResponse = await fetch(`${API_BASE_URL}/api/resume/start`, {
-        method: "POST",
-        body: formData,
-    });
-    const startData = await startResponse.json();
+    const { response: startResponse, body: startData } = await startAnalysis(formData);
     if (!startResponse.ok) return { ok: false, data: startData };
 
     const deadline = Date.now() + POLL_MAX_MS;
-    let failures = 0;
+    let firstFailureAt = null;
     while (Date.now() < deadline) {
         await sleep(POLL_INTERVAL_MS);
         let response, body;
         try {
-            response = await fetch(`${API_BASE_URL}/api/resume/status/${startData.job_id}`);
-            body = await response.json();
+            ({ response, body } = await fetchJson(`${API_BASE_URL}/api/resume/status/${startData.job_id}`));
         } catch (error) {
-            // One dropped poll is harmless; give up only if the backend stays unreachable.
-            failures += 1;
-            if (failures >= POLL_MAX_CONSECUTIVE_FAILURES) throw error;
+            // A dropped poll is harmless; give up only if the backend stays unreachable for a while.
+            if (firstFailureAt === null) firstFailureAt = Date.now();
+            if (Date.now() - firstFailureAt >= POLL_MAX_FAILURE_MS) throw error;
             continue;
         }
-        failures = 0;
+        firstFailureAt = null;
+        if (RETRYABLE_STATUSES.includes(response.status)) continue;
         if (!response.ok) return { ok: false, data: body };
         if (body.status === "done") return { ok: body.http_status < 400, data: body.result };
     }
@@ -423,7 +451,7 @@ analyzeButton.addEventListener("click", async () => {
 
     } catch (error) {
         finishProgress();
-        statusMessage.textContent = "Could not reach the backend. Is Flask running?";
+        statusMessage.textContent = "Could not reach the backend. Check your connection and try again - the server may have been asleep and needs a minute to wake up.";
         statusMessage.classList.remove("loading");
         statusMessage.classList.add("error");
     } finally {
