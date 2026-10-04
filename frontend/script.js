@@ -108,9 +108,7 @@ dropzone.addEventListener("drop", (event) => {
 const AGENTS = [
     { id: "resume_analyzer", icon: "📄", label: "Resume Analyzer Agent" },
     { id: "job_search", icon: "🔍", label: "Job Search Agent" },
-    { id: "adzuna", icon: "🌐", label: "Adzuna Agent" },
-    { id: "jooble", icon: "🌐", label: "Jooble Agent" },
-    { id: "arbeitnow", icon: "🌐", label: "Arbeitnow Agent" },
+    { id: "job_sources", icon: "🌐", label: "Searching jobs across multiple sources" },
     { id: "job_analysis", icon: "🔎", label: "Job Analysis Agent" },
     { id: "matching", icon: "🎯", label: "Matching Agent" },
     { id: "recommendation", icon: "✨", label: "Recommendation Agent" },
@@ -242,6 +240,16 @@ function createEl(tag, className, text) {
     return el;
 }
 
+// True only for absolute http:// or https:// URLs (rejects javascript:, data:, file:, etc.).
+function isSafeHttpUrl(url) {
+    try {
+        const protocol = new URL(url).protocol;
+        return protocol === "http:" || protocol === "https:";
+    } catch {
+        return false;
+    }
+}
+
 function scoreTierClass(score) {
     if (score >= 70) return "score-high";
     if (score >= 45) return "score-mid";
@@ -282,13 +290,16 @@ function buildJobCard(job) {
 
     card.appendChild(createEl("p", "why-matches", job.why_it_matches));
 
-    const applyLink = document.createElement("a");
-    applyLink.href = job.url;
-    applyLink.target = "_blank";
-    applyLink.rel = "noopener noreferrer";
-    applyLink.className = "apply-btn";
-    applyLink.textContent = "Apply Now →";
-    card.appendChild(applyLink);
+    // Job URLs come from external APIs, so only http(s) links get an Apply button.
+    if (isSafeHttpUrl(job.url)) {
+        const applyLink = document.createElement("a");
+        applyLink.href = job.url;
+        applyLink.target = "_blank";
+        applyLink.rel = "noopener noreferrer";
+        applyLink.className = "apply-btn";
+        applyLink.textContent = "Apply Now →";
+        card.appendChild(applyLink);
+    }
 
     return card;
 }

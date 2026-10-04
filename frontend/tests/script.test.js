@@ -167,6 +167,28 @@ describe("buildJobCard", () => {
     expect(link.target).toBe("_blank");
     expect(link.rel).toBe("noopener noreferrer");
   });
+
+  it("allows http and https apply links", () => {
+    for (const url of ["http://example.com/job", "https://example.com/job"]) {
+      expect(globalThis.buildJobCard({ ...job, url }).querySelector(".apply-btn")).not.toBeNull();
+    }
+  });
+
+  it("omits the apply button for unsafe or invalid URLs", () => {
+    const unsafe = [
+      "javascript:alert(1)",
+      "JavaScript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "file:///C:/secret.txt",
+      "ftp://example.com/job",
+      "/relative/path",
+      "",
+      undefined,
+    ];
+    for (const url of unsafe) {
+      expect(globalThis.buildJobCard({ ...job, url }).querySelector(".apply-btn")).toBeNull();
+    }
+  });
 });
 
 describe("displayRecommendations", () => {
@@ -273,9 +295,19 @@ describe("agent progress checklist", () => {
   it("renderAgentChecklist creates one pending item per agent", () => {
     globalThis.renderAgentChecklist();
     const items = document.querySelectorAll("#agent-progress-list li");
-    expect(items.length).toBe(8);
+    expect(items.length).toBe(6);
     items.forEach((item) => expect(item.className).toBe("agent-pending"));
     expect(document.getElementById("progress-bar-fill").style.width).toBe("0%");
+  });
+
+  it("shows one honest job-sources step instead of per-source agents", () => {
+    globalThis.renderAgentChecklist();
+    const text = document.getElementById("agent-progress-list").textContent;
+
+    expect(text).toContain("Searching jobs across multiple sources");
+    for (const name of ["Adzuna Agent", "Jooble Agent", "Arbeitnow Agent"]) {
+      expect(text).not.toContain(name);
+    }
   });
 
   it("markAgentDone marks one item done and updates the progress bar", () => {
@@ -284,7 +316,7 @@ describe("agent progress checklist", () => {
 
     const item = document.getElementById("agent-item-resume_analyzer");
     expect(item.className).toBe("agent-done");
-    expect(document.getElementById("progress-bar-fill").style.width).toBe("13%");
+    expect(document.getElementById("progress-bar-fill").style.width).toBe("17%");
   });
 
   it("markAgentDone is a no-op if the same agent is marked twice", () => {
@@ -292,7 +324,7 @@ describe("agent progress checklist", () => {
     globalThis.markAgentDone("resume_analyzer");
     globalThis.markAgentDone("resume_analyzer");
 
-    expect(document.getElementById("progress-bar-fill").style.width).toBe("13%");
+    expect(document.getElementById("progress-bar-fill").style.width).toBe("17%");
   });
 
   it("finishProgress marks every agent done immediately", () => {
@@ -300,7 +332,7 @@ describe("agent progress checklist", () => {
     globalThis.finishProgress();
 
     const doneItems = document.querySelectorAll("#agent-progress-list li.agent-done");
-    expect(doneItems.length).toBe(8);
+    expect(doneItems.length).toBe(6);
     expect(document.getElementById("progress-bar-fill").style.width).toBe("100%");
   });
 });
