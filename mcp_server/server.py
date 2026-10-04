@@ -85,6 +85,8 @@ def search_jobs(query: str, location: str = "", limit: int = 20) -> SearchResult
                 jobs_by_source[name] = future.result()
             except RuntimeError as e:  # one source failing must not fail the whole search
                 errors[name] = str(e)
+            except Exception as e:  # a malformed response is no different; keep the type, not the raw text
+                errors[name] = f"{name} returned an unexpected response ({type(e).__name__})"
 
     jobs = remove_duplicates(_interleave(jobs_by_source))[:limit]
     return SearchResult(source="all", count=len(jobs), jobs=jobs, errors=errors)

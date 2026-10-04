@@ -12,6 +12,11 @@ from app.services.mcp_job_client import wake_remote_server_in_background
 # Create the Flask application
 app = Flask(__name__)
 
+# Refuse huge uploads before reading them: a resume is a few hundred KB, and the free-tier
+# host has 512 MB of memory to share with the embedding model.
+MAX_UPLOAD_MB = 15
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+
 # Allow the browser frontend to call this backend
 CORS(app)
 
@@ -24,6 +29,11 @@ ALLOWED_EXTENSIONS = {"pdf", "docx"}
 
 # Resumes with fewer words than this are rejected before any LLM call
 MIN_RESUME_WORDS = 20
+
+
+@app.errorhandler(413)
+def file_too_large(_error):
+    return {"error": f"That file is too large. Please upload a resume under {MAX_UPLOAD_MB} MB."}, 413
 
 
 def is_allowed_file(filename):
@@ -51,10 +61,20 @@ def _read_resume_upload():
     if not is_allowed_file(file.filename):
         return None, ({"error": "Only PDF and DOCX files are allowed"}, 400)
 
-    save_path = os.path.join(UPLOAD_FOLDER, file.filename)
+    # Never use the client's filename on disk: "../../x.pdf" or "/etc/x.pdf" would escape the
+    # uploads folder. Only the (already validated) extension is kept; the name is random.
+    extension = file.filename.rsplit(".", 1)[1].lower()
+    save_path = os.path.join(UPLOAD_FOLDER, f"{uuid.uuid4().hex}.{extension}")
     file.save(save_path)
+    try:
+        extraction_result = extract_resume_text(save_path)
+    finally:
+        # Resumes are personal data: keep the file only as long as it takes to read it.
+        try:
+            os.remove(save_path)
+        except OSError:
+            pass
 
-    extraction_result = extract_resume_text(save_path)
     if not extraction_result["success"]:
         return None, ({"error": extraction_result["error"]}, 400)
 

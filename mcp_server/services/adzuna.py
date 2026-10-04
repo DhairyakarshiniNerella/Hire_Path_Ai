@@ -2,18 +2,19 @@ import requests
 
 from mcp_server import config
 from mcp_server.models import Job
+from mcp_server.services._fields import as_dict, as_text, items_from
 
 
 def _normalize(raw: dict) -> Job:
     return Job(
-        title=raw.get("title", ""),
-        company=raw.get("company", {}).get("display_name", ""),
-        location=raw.get("location", {}).get("display_name", ""),
-        description=raw.get("description", ""),
-        url=raw.get("redirect_url", ""),
+        title=as_text(raw.get("title")),
+        company=as_text(as_dict(raw.get("company")).get("display_name")),
+        location=as_text(as_dict(raw.get("location")).get("display_name")),
+        description=as_text(raw.get("description")),
+        url=as_text(raw.get("redirect_url")),
         source="Adzuna",
-        source_id=str(raw.get("id", "")),
-        employment_type=raw.get("contract_time") or "Unknown",
+        source_id=as_text(raw.get("id")),
+        employment_type=as_text(raw.get("contract_time")) or "Unknown",
     )
 
 
@@ -47,4 +48,4 @@ def search(query: str, location: str = "", limit: int = 10) -> list[Job]:
     if response.status_code != 200:
         raise RuntimeError(f"Adzuna returned status {response.status_code}")
 
-    return [_normalize(j) for j in response.json().get("results", [])]
+    return [_normalize(j) for j in items_from(response, "results", "Adzuna")]

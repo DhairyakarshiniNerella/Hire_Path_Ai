@@ -47,14 +47,32 @@ def _normalize_skill(skill: str) -> str:
     return skill.strip().lower()
 
 
+def _contains_skill(haystack: str, needle: str) -> bool:
+    """
+    True if `needle` appears in `haystack` as a whole skill, not inside another word. So
+    "react" is found in "react.js" and "c" in "c/c++", but "java" is not found in
+    "javascript", "r" not in "react", "sql" not in "mysql" and "c" not in "c++".
+    """
+    return re.search(rf"(?<![a-z0-9+#]){re.escape(needle)}(?![a-z0-9+#])", haystack) is not None
+
+
 def _skill_matches_any(target_skill_normalized: str, candidate_skills_normalized: set) -> bool:
-    """True if target_skill matches any candidate skill exactly, or as a substring either way."""
+    """True if target_skill equals a candidate skill, or one contains the other as a whole skill."""
+    if not target_skill_normalized:
+        return False  # a blank skill must never match anything
     for candidate_skill in candidate_skills_normalized:
+        if not candidate_skill:
+            continue
         if target_skill_normalized == candidate_skill:
             return True
-        if target_skill_normalized in candidate_skill or candidate_skill in target_skill_normalized:
+        if _contains_skill(candidate_skill, target_skill_normalized) or _contains_skill(target_skill_normalized, candidate_skill):
             return True
     return False
+
+
+def _clean_skills(skills) -> list:
+    """Drops blank entries (the LLM sometimes returns "" or " " as a skill)."""
+    return [s for s in (skills or []) if isinstance(s, str) and s.strip()]
 
 
 def match_skills(candidate_skills: list, job_required_skills: list, job_preferred_skills: list = None) -> dict:
@@ -68,7 +86,9 @@ def match_skills(candidate_skills: list, job_required_skills: list, job_preferre
             "skill_match_score": 0.0 to 1.0
         }
     """
-    job_preferred_skills = job_preferred_skills or []
+    candidate_skills = _clean_skills(candidate_skills)
+    job_required_skills = _clean_skills(job_required_skills)
+    job_preferred_skills = _clean_skills(job_preferred_skills)
 
     candidate_normalized = {_normalize_skill(s) for s in candidate_skills}
     required_normalized = {_normalize_skill(s): s for s in job_required_skills}
@@ -173,17 +193,13 @@ def calculate_match_score(candidate_profile, job: dict) -> dict:
     Every number here comes from deterministic Python logic - no LLM involved.
     """
     # --- Skill match (35%) ---
-    skill_result = match_skills(
-        candidate_profile.skills,
-        job.get("required_skills") or job.get("skills_required", []),
-        job.get("preferred_skills", []),
-    )
+    required_skills = _clean_skills(job.get("required_skills") or job.get("skills_required"))
+    preferred_skills = _clean_skills(job.get("preferred_skills"))
+    skill_result = match_skills(candidate_profile.skills, required_skills, preferred_skills)
 
     # A posting with no skills of its own can't be scored or have gaps listed, but the
     # candidate's skills that appear in its text are still worth showing.
-    job_lists_skills = bool(
-        job.get("required_skills") or job.get("skills_required") or job.get("preferred_skills")
-    )
+    job_lists_skills = bool(required_skills or preferred_skills)
     if not job_lists_skills:
         skill_result["matched_skills"] = find_skills_in_text(
             candidate_profile.skills, f"{job.get('title', '')} {job.get('description', '')}"

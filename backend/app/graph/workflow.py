@@ -53,6 +53,14 @@ def job_analysis_node(state: WorkflowState) -> dict:
         unique_jobs = remove_duplicate_jobs(normalized)
         jobs_to_analyze = select_balanced_jobs(unique_jobs, MAX_JOBS_TO_ANALYZE)
         analyzed = analyze_jobs(jobs_to_analyze)
+
+        # analyze_job swallows per-job failures so one bad posting can't sink the run. But if
+        # EVERY job failed (typically the AI service's rate limit), carrying on would score
+        # empty jobs and end in a misleading "no matching jobs". Report the real cause instead.
+        failures = [job["analysis_error"] for job in analyzed if job.get("analysis_error")]
+        if analyzed and len(failures) == len(analyzed):
+            raise RuntimeError(failures[0])
+
         return {"analyzed_jobs": analyzed}
     except Exception as e:
         return _node_error("Job Analysis Agent", e)

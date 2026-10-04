@@ -1,48 +1,63 @@
 from typing import List, Optional
 
 
+def _text(value, default: str = "") -> str:
+    """A string for any API value: None -> default, numbers and other types -> str()."""
+    if value is None:
+        return default
+    return value if isinstance(value, str) else str(value)
+
+
+def _dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
 def normalize_adzuna_job(job: dict) -> dict:
     return {
-        "title": job.get("title", ""),
-        "company": job.get("company", {}).get("display_name", ""),
-        "location": job.get("location", {}).get("display_name", ""),
-        "description": job.get("description", ""),
-        "url": job.get("redirect_url", ""),
+        "title": _text(job.get("title")),
+        "company": _text(_dict(job.get("company")).get("display_name")),
+        "location": _text(_dict(job.get("location")).get("display_name")),
+        "description": _text(job.get("description")),
+        "url": _text(job.get("redirect_url")),
         "source": "Adzuna",
-        "source_id": job.get("id", ""),
+        "source_id": _text(job.get("id")),
         "experience_required": "Unknown",  # extracted later by the Job Analysis Agent
         "skills_required": [],             # extracted later by the Job Analysis Agent
-        "employment_type": job.get("contract_time", "Unknown"),
+        "employment_type": _text(job.get("contract_time")) or "Unknown",
     }
 
 
 def normalize_jooble_job(job: dict) -> dict:
     return {
-        "title": job.get("title", ""),
-        "company": job.get("company", ""),
-        "location": job.get("location", ""),
-        "description": job.get("snippet", ""),
-        "url": job.get("link", ""),
+        "title": _text(job.get("title")),
+        "company": _text(job.get("company")),
+        "location": _text(job.get("location")),
+        "description": _text(job.get("snippet")),
+        "url": _text(job.get("link")),
         "source": "Jooble",
-        "source_id": str(job.get("id", "")),
+        "source_id": _text(job.get("id")),
         "experience_required": "Unknown",
         "skills_required": [],
-        "employment_type": job.get("type", "Unknown"),
+        "employment_type": _text(job.get("type")) or "Unknown",
     }
 
 
 def normalize_arbeitnow_job(job: dict) -> dict:
     return {
-        "title": job.get("title", ""),
-        "company": job.get("company_name", ""),
-        "location": job.get("location", ""),
-        "description": job.get("description", ""),
-        "url": job.get("url", ""),
+        "title": _text(job.get("title")),
+        "company": _text(job.get("company_name")),
+        "location": _text(job.get("location")),
+        "description": _text(job.get("description")),
+        "url": _text(job.get("url")),
         "source": "Arbeitnow",
-        "source_id": job.get("slug", ""),
+        "source_id": _text(job.get("slug")),
         "experience_required": "Unknown",
         "skills_required": [],
-        "employment_type": ", ".join(job.get("job_types", [])) or "Unknown",
+        "employment_type": ", ".join(_text(t) for t in _list(job.get("job_types"))) or "Unknown",
     }
 
 

@@ -127,3 +127,28 @@ def test_recommendation_node_catches_exceptions(monkeypatch):
     monkeypatch.setattr(workflow_module, "generate_recommendations", boom)
     result = recommendation_node({"candidate_profile": object(), "ranked_jobs": []})
     assert "Recommendation Agent failed" in result["errors"][0]
+
+
+def test_job_analysis_node_reports_an_error_when_every_job_failed_analysis(monkeypatch):
+    monkeypatch.setattr(workflow_module, "normalize_jobs", lambda jobs: jobs)
+    monkeypatch.setattr(workflow_module, "remove_duplicate_jobs", lambda jobs: jobs)
+    limit = "Job Analysis Agent failed: Error code: 429 - rate_limit_exceeded tokens per day (TPD) try again in 11m51s"
+    monkeypatch.setattr(workflow_module, "analyze_jobs", lambda jobs: [{**j, "analysis_error": limit} for j in jobs])
+
+    result = job_analysis_node({"jobs": [{"title": "A"}, {"title": "B"}]})
+
+    assert "analyzed_jobs" not in result
+    assert "usage limit" in result["errors"][0]
+
+
+def test_job_analysis_node_tolerates_some_failed_jobs(monkeypatch):
+    monkeypatch.setattr(workflow_module, "normalize_jobs", lambda jobs: jobs)
+    monkeypatch.setattr(workflow_module, "remove_duplicate_jobs", lambda jobs: jobs)
+    monkeypatch.setattr(
+        workflow_module, "analyze_jobs",
+        lambda jobs: [{"title": "A", "analysis_error": "boom"}, {"title": "B"}],
+    )
+
+    result = job_analysis_node({"jobs": [{"title": "A"}, {"title": "B"}]})
+
+    assert len(result["analyzed_jobs"]) == 2

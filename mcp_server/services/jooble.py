@@ -2,18 +2,19 @@ import requests
 
 from mcp_server import config
 from mcp_server.models import Job
+from mcp_server.services._fields import as_text, items_from
 
 
 def _normalize(raw: dict) -> Job:
     return Job(
-        title=raw.get("title", ""),
-        company=raw.get("company", ""),
-        location=raw.get("location", ""),
-        description=raw.get("snippet", ""),
-        url=raw.get("link", ""),
+        title=as_text(raw.get("title")),
+        company=as_text(raw.get("company")),
+        location=as_text(raw.get("location")),
+        description=as_text(raw.get("snippet")),
+        url=as_text(raw.get("link")),
         source="Jooble",
-        source_id=str(raw.get("id", "")),
-        employment_type=raw.get("type") or "Unknown",
+        source_id=as_text(raw.get("id")),
+        employment_type=as_text(raw.get("type")) or "Unknown",
     )
 
 
@@ -41,4 +42,4 @@ def search(query: str, location: str = "", limit: int = 10) -> list[Job]:
         raise RuntimeError(f"Jooble returned status {response.status_code}")
 
     # Jooble has no "limit" parameter, so we trim after the call.
-    return [_normalize(j) for j in response.json().get("jobs", [])][:limit]
+    return [_normalize(j) for j in items_from(response, "jobs", "Jooble")][:limit]

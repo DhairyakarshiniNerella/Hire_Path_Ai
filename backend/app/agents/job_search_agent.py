@@ -40,6 +40,7 @@ def generate_search_queries(candidate_profile: CandidateProfile) -> List[str]:
 Skills: {', '.join(candidate_profile.skills)}
 Technologies: {', '.join(candidate_profile.technologies)}
 Target Roles: {', '.join(candidate_profile.target_roles)}
+Projects: {', '.join(p.name for p in candidate_profile.projects)}
 Career Level: {candidate_profile.career_level}
 """
     messages = [

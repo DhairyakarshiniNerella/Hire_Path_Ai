@@ -39,6 +39,10 @@ Rules:
     3. If two full-time roles' dates overlap, count the overlapping span once, not twice.
     4. Sum only those spans - never the calendar time from the first job to the last. A role
        still marked "Present" must be counted all the way up to {today}.
+  Student jobs do not count either: roles held while the candidate was still enrolled for their degree
+  (research assistant, teaching assistant, lab assistant, campus or university IT/support jobs, student
+  mentor) are part-time student work, even if they say "Present". Only count such a role if it is a
+  clearly full-time position.
   Also list every full-time role's dates in full_time_periods (start/end as YYYY-MM, end empty
   if current, plus the job title in "role") - the server recomputes the total from these, so they
   must be accurate. NEVER put an internship in full_time_periods.
@@ -47,7 +51,12 @@ Rules:
   If the candidate has only internships, total_experience_years = 0.
 - career_level should be one of: Fresher, Entry Level, Mid Level, Senior, Unknown - based on the
   computed total_experience_years (0 = Fresher, <2 = Entry Level, 2-5 = Mid Level, >5 = Senior).
-- target_roles should be 2-4 job titles the candidate is realistically suited for, based on their skills and experience.
+- target_roles must ALWAYS contain 2-4 job titles the candidate is realistically suited for. Base them
+  on the stated objective or summary first, then projects, internships and skills. This applies to
+  students and freshers too: with no jobs yet, infer entry-level titles from their objective and
+  projects (e.g. an objective about computer vision and machine learning, plus SVM/OpenCV projects,
+  => "Machine Learning Engineer", "Computer Vision Engineer", "Research Engineer"). Use real job
+  titles, not skills or technologies, and never return an empty list.
 - projects: include every entry from the resume's Projects section, AND any project that is
   explicitly described as a project inside the Experience/Internship section (e.g. a bullet that
   names a specific project, POC, or product/module the candidate built, such as "Built a Leave
