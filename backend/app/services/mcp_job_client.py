@@ -1,9 +1,12 @@
 import asyncio
 import os
 import sys
+import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import requests
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -53,6 +56,41 @@ def _remote_server() -> tuple[str, dict[str, str]] | None:
     return url, {"Authorization": f"Bearer {token}"}
 
 
+# A free-tier host puts an idle service to sleep. While it wakes (30-60 seconds) the gateway
+# answers 502/503, so asking for jobs straight away would fail and fall back to the direct
+# APIs. Polling /health first waits the wake-up out.
+WAKE_TIMEOUT_SECONDS = 75
+WAKE_POLL_SECONDS = 3
+
+
+def wake_remote_server(timeout: float = WAKE_TIMEOUT_SECONDS) -> bool:
+    """
+    Waits until the remote MCP server answers /health. Returns True once it is up and
+    False on timeout, or when remote mode is not configured. Never raises: if the server
+    stays down, the normal search call fails and the caller falls back as usual.
+    """
+    base_url = os.environ.get("MCP_SERVER_URL", "").strip()
+    if not base_url:
+        return False
+    health_url = base_url.rstrip("/").removesuffix("/mcp") + "/health"
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if requests.get(health_url, timeout=10).status_code == 200:
+                return True
+        except requests.RequestException:
+            pass
+        if time.monotonic() + WAKE_POLL_SECONDS >= deadline:
+            return False
+        time.sleep(WAKE_POLL_SECONDS)
+
+
+def wake_remote_server_in_background() -> None:
+    """Starts waking the server now, so the wake-up overlaps with other work (resume analysis)."""
+    if os.environ.get("MCP_SERVER_URL", "").strip():
+        threading.Thread(target=wake_remote_server, daemon=True).start()
+
+
 @asynccontextmanager
 async def _open_streams():
     """Connects to the MCP server (remote over HTTP, or a local subprocess) and yields (read, write)."""
@@ -88,6 +126,7 @@ def search_jobs_batch_via_mcp(queries: list[str], location: str = "", limit: int
     over a single MCP session. Returns one SearchResult dict per query, in order:
     {"source", "count", "jobs", "errors"}.
     """
+    wake_remote_server()  # no-op unless MCP_SERVER_URL is set
     try:
         return asyncio.run(_call_search_jobs(queries, location, limit))
     except BaseExceptionGroup as group:

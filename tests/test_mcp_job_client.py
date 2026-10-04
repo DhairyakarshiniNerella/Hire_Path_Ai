@@ -84,3 +84,59 @@ def test_batch_search_reports_the_root_cause_not_the_taskgroup_message(monkeypat
 
     with pytest.raises(RuntimeError, match="ConnectionError: server unreachable"):
         mcp_job_client.search_jobs_batch_via_mcp(["x"])
+
+
+# ---------- waking a sleeping remote server ----------
+
+class _FakeResponse:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+
+def test_wake_does_nothing_when_remote_mode_is_off(monkeypatch):
+    monkeypatch.delenv("MCP_SERVER_URL", raising=False)
+    monkeypatch.setattr(mcp_job_client.requests, "get", lambda *a, **k: pytest.fail("must not call the network"))
+    assert mcp_job_client.wake_remote_server() is False
+
+
+def test_wake_waits_through_502s_until_the_server_is_up(monkeypatch):
+    monkeypatch.setenv("MCP_SERVER_URL", "https://x.onrender.com/mcp")
+    monkeypatch.setattr(mcp_job_client.time, "sleep", lambda s: None)
+    statuses = iter([502, 502, 200])
+    urls = []
+
+    def fake_get(url, timeout):
+        urls.append(url)
+        return _FakeResponse(next(statuses))
+
+    monkeypatch.setattr(mcp_job_client.requests, "get", fake_get)
+
+    assert mcp_job_client.wake_remote_server() is True
+    assert urls == ["https://x.onrender.com/health"] * 3
+
+
+def test_wake_survives_connection_errors_then_gives_up_on_timeout(monkeypatch):
+    monkeypatch.setenv("MCP_SERVER_URL", "https://x.onrender.com")
+    monkeypatch.setattr(mcp_job_client.time, "sleep", lambda s: None)
+    clock = iter(range(0, 1000, 10))
+    monkeypatch.setattr(mcp_job_client.time, "monotonic", lambda: next(clock))
+
+    def refuse(url, timeout):
+        raise mcp_job_client.requests.ConnectionError("down")
+
+    monkeypatch.setattr(mcp_job_client.requests, "get", refuse)
+
+    assert mcp_job_client.wake_remote_server(timeout=30) is False
+
+
+def test_batch_search_wakes_the_server_before_searching(monkeypatch):
+    order = []
+    monkeypatch.setattr(mcp_job_client, "wake_remote_server", lambda: order.append("wake"))
+
+    async def fake_call(queries, location, limit):
+        order.append("search")
+        return []
+
+    monkeypatch.setattr(mcp_job_client, "_call_search_jobs", fake_call)
+    mcp_job_client.search_jobs_batch_via_mcp(["x"])
+    assert order == ["wake", "search"]

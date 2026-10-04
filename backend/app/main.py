@@ -7,6 +7,7 @@ from flask_cors import CORS
 from app.tools.resume_parser import extract_resume_text
 from app.graph.workflow import workflow
 from app.services.token_tracker import reset_usage, get_usage_summary
+from app.services.mcp_job_client import wake_remote_server_in_background
 
 # Create the Flask application
 app = Flask(__name__)
@@ -71,6 +72,7 @@ def _analyze_resume_text(resume_text):
     Returns (response_body, http_status).
     """
     reset_usage()  # start counting tokens fresh for this run
+    wake_remote_server_in_background()  # a sleeping MCP server wakes while the resume is analyzed
 
     initial_state = {
         "resume_text": resume_text,
