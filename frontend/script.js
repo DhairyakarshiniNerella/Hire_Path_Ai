@@ -428,10 +428,23 @@ analyzeButton.addEventListener("click", async () => {
 
     startSimulatedProgress();
 
-    const formData = new FormData();
-    formData.append("resume", selectedFile);
-
     try {
+        // Read the file into memory before uploading. On Android the browser otherwise streams it
+        // from the file picker's reference, which fails with a network error if the file came from
+        // Drive/Downloads and can't be re-read at upload time (and makes retries unreliable).
+        let fileBytes;
+        try {
+            fileBytes = await selectedFile.arrayBuffer();
+        } catch (readError) {
+            finishProgress();
+            statusMessage.textContent = "Could not read that file. Please save it to your device and choose it again.";
+            statusMessage.classList.remove("loading");
+            statusMessage.classList.add("error");
+            return;
+        }
+        const formData = new FormData();
+        formData.append("resume", new Blob([fileBytes], { type: selectedFile.type }), selectedFile.name);
+
         const { ok, data } = await analyzeResume(formData);
 
         finishProgress();

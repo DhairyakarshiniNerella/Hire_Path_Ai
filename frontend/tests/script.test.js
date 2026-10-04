@@ -341,7 +341,14 @@ describe("agent progress checklist", () => {
 
 function selectFile(name = "resume.pdf") {
   const input = document.getElementById("resume-input");
-  Object.defineProperty(input, "files", { value: [{ name }], configurable: true });
+  const file = { name, type: "application/pdf", arrayBuffer: async () => new ArrayBuffer(8) };
+  Object.defineProperty(input, "files", { value: [file], configurable: true });
+}
+
+function selectUnreadableFile(name = "resume.pdf") {
+  const input = document.getElementById("resume-input");
+  const file = { name, type: "application/pdf", arrayBuffer: async () => { throw new Error("NotReadableError"); } };
+  Object.defineProperty(input, "files", { value: [file], configurable: true });
 }
 
 function clearFile() {
@@ -474,6 +481,20 @@ describe("analyze button click flow", () => {
     });
 
     expect(document.getElementById("status-message").classList.contains("error")).toBe(true);
+    expect(document.getElementById("analyze-btn").disabled).toBe(false);
+  });
+
+  it("tells the user when the chosen file cannot be read, without calling the backend", async () => {
+    selectUnreadableFile();
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    document.getElementById("analyze-btn").click();
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("status-message").textContent).toContain("Could not read that file");
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(document.getElementById("analyze-btn").disabled).toBe(false);
   });
 
