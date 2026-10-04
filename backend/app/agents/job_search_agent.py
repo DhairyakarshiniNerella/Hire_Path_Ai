@@ -154,13 +154,13 @@ def search_jobs_for_candidate(candidate_profile: CandidateProfile, location: str
             results = search_jobs_batch_via_mcp(queries, location=location)
             for query, result in zip(queries, results):
                 all_jobs.extend(_jobs_from_mcp_result(query, result))
-            return {"search_queries": queries, "jobs": all_jobs}
+            return {"search_queries": queries, "jobs": all_jobs, "search_via": "mcp"}
         except Exception as e:
             print(f"[job_search] MCP unavailable ({e}); falling back to direct APIs", flush=True)
             all_jobs = [job for query in queries for job in search_all_sources_direct(query, location)]
-            return {"search_queries": queries, "jobs": all_jobs}
+            return {"search_queries": queries, "jobs": all_jobs, "search_via": "direct"}
 
     for query in queries:
         all_jobs.extend(search_all_sources(query, location=location))
 
-    return {"search_queries": queries, "jobs": all_jobs}
+    return {"search_queries": queries, "jobs": all_jobs, "search_via": "mcp" if _mcp_mode_enabled() else "direct"}

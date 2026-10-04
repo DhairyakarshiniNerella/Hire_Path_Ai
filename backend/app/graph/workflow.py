@@ -37,7 +37,7 @@ def job_search_node(state: WorkflowState) -> dict:
     """Graph node wrapper around the Job Search Agent."""
     try:
         result = search_jobs_for_candidate(state["candidate_profile"])
-        return {"search_queries": result["search_queries"], "jobs": result["jobs"]}
+        return {"search_queries": result["search_queries"], "jobs": result["jobs"], "search_via": result["search_via"]}
     except Exception as e:
         return _node_error("Job Search Agent", e)
 

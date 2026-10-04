@@ -44,10 +44,10 @@ def test_resume_analyzer_node_catches_exceptions(monkeypatch):
 def test_job_search_node_success(monkeypatch):
     monkeypatch.setattr(
         workflow_module, "search_jobs_for_candidate",
-        lambda profile: {"search_queries": ["Python Dev"], "jobs": [{"title": "x"}]},
+        lambda profile: {"search_queries": ["Python Dev"], "jobs": [{"title": "x"}], "search_via": "mcp"},
     )
     result = job_search_node({"candidate_profile": object()})
-    assert result == {"search_queries": ["Python Dev"], "jobs": [{"title": "x"}]}
+    assert result == {"search_queries": ["Python Dev"], "jobs": [{"title": "x"}], "search_via": "mcp"}
 
 
 def test_job_search_node_catches_exceptions(monkeypatch):

@@ -17,6 +17,7 @@ class WorkflowState(TypedDict):
     # Filled in by the Job Search Agent
     search_queries: List[str]
     jobs: List[dict]  # raw + normalized job postings from Adzuna/Jooble
+    search_via: Optional[str]  # "mcp" if jobs came through the MCP server, else "direct"
 
     # Filled in by the Job Analysis Agent
     analyzed_jobs: List[dict]  # jobs with extracted requirements (skills, experience, etc.)

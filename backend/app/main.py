@@ -71,6 +71,7 @@ def upload_resume():
         "candidate_profile": None,
         "search_queries": [],
         "jobs": None,
+        "search_via": None,
         "analyzed_jobs": None,
         "ranked_jobs": None,
         "recommendations": None,
@@ -101,6 +102,7 @@ def upload_resume():
         "status": "ok",
         "candidate_profile": candidate_profile.model_dump(),
         "search_queries": final_state.get("search_queries", []),
+        "search_via": final_state.get("search_via"),
         "recommendations": final_state.get("recommendations", []),
         "token_usage": get_usage_summary(),
     }

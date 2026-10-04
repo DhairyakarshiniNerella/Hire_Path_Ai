@@ -173,7 +173,7 @@ def test_search_jobs_for_candidate_no_queries_returns_no_jobs(monkeypatch):
 
     result = job_search_agent.search_jobs_for_candidate(CandidateProfile())
 
-    assert result == {"search_queries": [], "jobs": []}
+    assert result == {"search_queries": [], "jobs": [], "search_via": "direct"}
 
 
 # ---------- MCP mode ----------

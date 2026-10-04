@@ -108,7 +108,7 @@ dropzone.addEventListener("drop", (event) => {
 const AGENTS = [
     { id: "resume_analyzer", icon: "📄", label: "Resume Analyzer Agent" },
     { id: "job_search", icon: "🔍", label: "Job Search Agent" },
-    { id: "job_sources", icon: "🌐", label: "Searching jobs across multiple sources" },
+    { id: "job_sources", icon: "🌐", label: "Fetching jobs through the MCP server (Adzuna, Jooble, Arbeitnow)" },
     { id: "job_analysis", icon: "🔎", label: "Job Analysis Agent" },
     { id: "matching", icon: "🎯", label: "Matching Agent" },
     { id: "recommendation", icon: "✨", label: "Recommendation Agent" },
@@ -231,6 +231,21 @@ function displayProfile(profile) {
     document.getElementById("profile-target-roles").textContent = profile.target_roles.join(", ") || "Not specified";
 
     profileSection.classList.remove("hidden");
+}
+
+// Tells the user how the jobs were actually fetched (reported by the backend, not assumed).
+function displaySearchVia(searchVia) {
+    const note = document.getElementById("search-via-note");
+    if (!note) return;
+    if (searchVia === "mcp") {
+        note.textContent = "🔌 Jobs were fetched through the HirePath MCP server (Model Context Protocol).";
+    } else if (searchVia === "direct") {
+        note.textContent = "Jobs were fetched directly from the job APIs (the MCP server was unavailable).";
+    } else {
+        note.classList.add("hidden");
+        return;
+    }
+    note.classList.remove("hidden");
 }
 
 function createEl(tag, className, text) {
@@ -367,6 +382,7 @@ analyzeButton.addEventListener("click", async () => {
         statusMessage.textContent = "";
         statusMessage.classList.remove("loading");
         displayProfile(data.candidate_profile);
+        displaySearchVia(data.search_via);
         displayRecommendations(data.recommendations);
 
     } catch (error) {

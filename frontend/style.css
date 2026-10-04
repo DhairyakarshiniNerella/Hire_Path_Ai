@@ -755,3 +755,14 @@ button:disabled {
         flex-direction: column;
     }
 }
+
+.search-via-note {
+    margin: 0 0 16px 0;
+    padding: 10px 16px;
+    border-radius: 12px;
+    background: var(--chip-bg);
+    color: var(--accent-dark);
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: center;
+}

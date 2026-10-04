@@ -304,7 +304,7 @@ describe("agent progress checklist", () => {
     globalThis.renderAgentChecklist();
     const text = document.getElementById("agent-progress-list").textContent;
 
-    expect(text).toContain("Searching jobs across multiple sources");
+    expect(text).toContain("Fetching jobs through the MCP server");
     for (const name of ["Adzuna Agent", "Jooble Agent", "Arbeitnow Agent"]) {
       expect(text).not.toContain(name);
     }
