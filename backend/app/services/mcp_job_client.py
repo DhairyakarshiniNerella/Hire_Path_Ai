@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -9,13 +10,28 @@ from mcp.client.stdio import stdio_client
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-async def _call_search_jobs(queries: list[str], location: str, limit: int) -> list[dict]:
+# The MCP SDK only forwards a small safe list of environment variables to the server
+# subprocess, so the job-source credentials are passed explicitly. On Render they come
+# from the service's environment variables; locally the server can also read its own .env.
+SERVER_ENV_VARS = ("ADZUNA_APP_ID", "ADZUNA_APP_KEY", "JOOBLE_API_KEY")
+
+
+def _server_env() -> dict[str, str]:
+    return {name: os.environ[name] for name in SERVER_ENV_VARS if os.environ.get(name)}
+
+
+def _server_params() -> StdioServerParameters:
     # The client launches the HirePath job MCP server as a subprocess (STDIO transport).
-    params = StdioServerParameters(
+    return StdioServerParameters(
         command=sys.executable,
         args=["-m", "mcp_server.server"],
         cwd=str(PROJECT_ROOT),
+        env=_server_env(),
     )
+
+
+async def _call_search_jobs(queries: list[str], location: str, limit: int) -> list[dict]:
+    params = _server_params()
     results = []
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
