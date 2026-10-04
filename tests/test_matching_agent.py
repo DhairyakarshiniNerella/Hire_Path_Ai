@@ -16,8 +16,8 @@ def test_rank_jobs_sorts_best_match_first(monkeypatch):
     assert [job["title"] for job in ranked] == ["Job B", "Job C", "Job A"]
 
 
-def test_rank_jobs_filters_out_jobs_below_50_percent(monkeypatch):
-    scores = {"Job A": 40, "Job B": 90, "Job C": 49}
+def test_rank_jobs_filters_out_jobs_below_threshold(monkeypatch):
+    scores = {"Job A": 20, "Job B": 90, "Job C": 34}
 
     def fake_calculate_match_score(candidate_profile, job):
         return {"match_score": scores[job["title"]]}
@@ -30,8 +30,8 @@ def test_rank_jobs_filters_out_jobs_below_50_percent(monkeypatch):
     assert [job["title"] for job in ranked] == ["Job B"]
 
 
-def test_rank_jobs_includes_jobs_at_exactly_50_percent(monkeypatch):
-    monkeypatch.setattr(matching_agent, "calculate_match_score", lambda *a, **k: {"match_score": 50})
+def test_rank_jobs_includes_jobs_at_exactly_threshold(monkeypatch):
+    monkeypatch.setattr(matching_agent, "calculate_match_score", lambda *a, **k: {"match_score": 35})
     jobs = [{"title": "Job A"}]
     ranked = rank_jobs_for_candidate(candidate_profile=None, analyzed_jobs=jobs)
     assert [job["title"] for job in ranked] == ["Job A"]
@@ -57,7 +57,7 @@ def test_rank_jobs_empty_list_returns_empty_list(monkeypatch):
 
 
 def test_rank_jobs_stable_for_equal_scores(monkeypatch):
-    monkeypatch.setattr(matching_agent, "calculate_match_score", lambda *a, **k: {"match_score": 50})
+    monkeypatch.setattr(matching_agent, "calculate_match_score", lambda *a, **k: {"match_score": 35})
     jobs = [{"title": "A"}, {"title": "B"}, {"title": "C"}]
     ranked = rank_jobs_for_candidate(candidate_profile=None, analyzed_jobs=jobs)
     # Python's sort is stable, so equal scores keep their original relative order
