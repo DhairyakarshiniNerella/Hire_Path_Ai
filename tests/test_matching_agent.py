@@ -62,3 +62,16 @@ def test_rank_jobs_stable_for_equal_scores(monkeypatch):
     ranked = rank_jobs_for_candidate(candidate_profile=None, analyzed_jobs=jobs)
     # Python's sort is stable, so equal scores keep their original relative order
     assert [job["title"] for job in ranked] == ["A", "B", "C"]
+
+
+def test_rank_jobs_drops_jobs_whose_posting_lists_skills_but_none_match(monkeypatch):
+    results = {
+        "No overlap": {"match_score": 45, "skills_listed": True, "matched_skills": []},
+        "Some overlap": {"match_score": 45, "skills_listed": True, "matched_skills": ["Python"]},
+        "Snippet only": {"match_score": 45, "skills_listed": False, "matched_skills": []},
+    }
+    monkeypatch.setattr(matching_agent, "calculate_match_score", lambda profile, job: results[job["title"]])
+
+    ranked = rank_jobs_for_candidate(None, [{"title": t} for t in results])
+
+    assert [job["title"] for job in ranked] == ["Some overlap", "Snippet only"]

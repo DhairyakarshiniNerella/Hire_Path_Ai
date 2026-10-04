@@ -79,7 +79,10 @@ Pre-calculated matching data (do not change these):
 
     except Exception:
         # Fall back to a simple, still-useful explanation instead of crashing
-        job["why_it_matches"] = f"This job matched {job.get('match_score', 0)}% based on your skills and experience."
+        job["why_it_matches"] = (
+            f"Match score: {job.get('match_score', 0)}%. A written explanation is unavailable right now - "
+            "see the matched and missing skills above."
+        )
         job["experience_analysis"] = f"Experience compatibility: {job.get('experience_compatibility', 'Unknown')}."
         job["skill_gap_summary"] = (
             f"Missing skills: {', '.join(job.get('missing_skills', []))}"

@@ -363,7 +363,7 @@ function buildJobCard(job) {
     // skills_listed is false when the posting (often just a short snippet) names no skills.
     const unlisted = job.skills_listed === false;
     renderChips(matchedChips, job.matched_skills, "chip-success",
-        unlisted ? "None of your skills appear in the posting text" : "Not specified");
+        unlisted ? "None of your skills appear in the posting text" : "None of the posting's skills match yours");
     matchedWrap.appendChild(matchedChips);
     card.appendChild(matchedWrap);
 
