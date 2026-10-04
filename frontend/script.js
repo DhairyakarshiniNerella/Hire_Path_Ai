@@ -172,13 +172,13 @@ function finishProgress() {
 }
 
 // Renders a list of strings as small pill/chip elements inside a container.
-function renderChips(container, items, chipClass) {
+function renderChips(container, items, chipClass, emptyText = "Not specified") {
     container.innerHTML = "";
     container.classList.add("chip-row");
 
     if (!items || items.length === 0) {
         container.classList.remove("chip-row");
-        container.textContent = "Not specified";
+        container.textContent = emptyText;
         return;
     }
 
@@ -360,14 +360,18 @@ function buildJobCard(job) {
     const matchedWrap = createEl("div", "skills-block");
     matchedWrap.appendChild(createEl("strong", null, "Matched Skills"));
     const matchedChips = createEl("div", "chip-row");
-    renderChips(matchedChips, job.matched_skills, "chip-success");
+    // skills_listed is false when the posting (often just a short snippet) names no skills.
+    const unlisted = job.skills_listed === false;
+    renderChips(matchedChips, job.matched_skills, "chip-success",
+        unlisted ? "None of your skills appear in the posting text" : "Not specified");
     matchedWrap.appendChild(matchedChips);
     card.appendChild(matchedWrap);
 
     const missingWrap = createEl("div", "skills-block");
     missingWrap.appendChild(createEl("strong", null, "Missing Skills"));
     const missingChips = createEl("div", "chip-row");
-    renderChips(missingChips, job.missing_skills, "chip-danger");
+    renderChips(missingChips, job.missing_skills, "chip-danger",
+        unlisted ? "This posting doesn't list its required skills" : "None");
     missingWrap.appendChild(missingChips);
     card.appendChild(missingWrap);
 

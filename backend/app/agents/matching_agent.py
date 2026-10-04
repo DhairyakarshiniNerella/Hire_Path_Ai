@@ -3,7 +3,7 @@ from app.services.matcher import calculate_match_score
 
 # Jobs scoring below this are weak matches (missing most required skills,
 # wrong experience level, etc.) - not worth surfacing as a "recommendation".
-MIN_MATCH_SCORE = 35
+MIN_MATCH_SCORE = 40
 
 
 def rank_jobs_for_candidate(candidate_profile, analyzed_jobs: List[dict]) -> List[dict]:

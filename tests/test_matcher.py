@@ -202,3 +202,27 @@ def test_rescale_similarity_floor_and_ceiling():
 def test_rescale_similarity_midpoint():
     # halfway between floor (0.1) and ceiling (0.7) -> 0.5
     assert matcher._rescale_similarity(0.4) == pytest.approx(0.5)
+
+
+# ---------- postings that list no skills ----------
+
+def test_find_skills_in_text_matches_whole_words_case_insensitively():
+    found = matcher.find_skills_in_text(["Python", "SQL", "R", "Java"], "Looking for python and sql. We use JavaScript.")
+    assert found == ["Python", "SQL"]  # "Java" must not match inside "JavaScript"; one-letter skills are skipped
+
+
+def test_calculate_match_score_flags_postings_without_skills_and_shows_text_matches(mock_similarity):
+    profile = CandidateProfile(skills=["Python", "Docker"], total_experience_years=1)
+    job = {"title": "AI Engineer", "description": "Build services in Python.", "required_skills": [], "preferred_skills": []}
+    result = matcher.calculate_match_score(profile, job)
+    assert result["skills_listed"] is False
+    assert result["matched_skills"] == ["Python"]
+    assert result["missing_skills"] == []
+
+
+def test_calculate_match_score_marks_postings_with_skills_as_listed(mock_similarity):
+    profile = CandidateProfile(skills=["Python"], total_experience_years=1)
+    job = {"title": "Dev", "description": "x", "required_skills": ["Python", "Go"], "preferred_skills": []}
+    result = matcher.calculate_match_score(profile, job)
+    assert result["skills_listed"] is True
+    assert result["missing_skills"] == ["Go"]

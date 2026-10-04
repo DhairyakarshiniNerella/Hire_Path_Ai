@@ -155,6 +155,19 @@ describe("buildJobCard", () => {
     expect(card.querySelector(".job-meta").textContent).toBe("Acme — Remote (via Adzuna)");
   });
 
+  it("explains empty skill lists when the posting lists no skills", () => {
+    const card = globalThis.buildJobCard({ ...job, matched_skills: [], missing_skills: [], skills_listed: false });
+    const text = card.textContent;
+    expect(text).toContain("None of your skills appear in the posting text");
+    expect(text).toContain("This posting doesn't list its required skills");
+    expect(text).not.toContain("Not specified");
+  });
+
+  it("shows 'None' for missing skills when the posting lists skills and nothing is missing", () => {
+    const card = globalThis.buildJobCard({ ...job, missing_skills: [], skills_listed: true });
+    expect(card.querySelectorAll(".skills-block")[1].textContent).toContain("None");
+  });
+
   it("falls back to 'Location not specified' when location is missing", () => {
     const card = globalThis.buildJobCard({ ...job, location: "" });
     expect(card.querySelector(".job-meta").textContent).toContain("Location not specified");

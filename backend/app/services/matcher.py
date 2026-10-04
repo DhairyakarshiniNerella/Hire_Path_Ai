@@ -1,3 +1,4 @@
+import re
 from app.services.experience_parser import extract_experience_requirement
 from app.services.embeddings import compute_semantic_similarity
 
@@ -101,6 +102,22 @@ def match_skills(candidate_skills: list, job_required_skills: list, job_preferre
     }
 
 
+def find_skills_in_text(candidate_skills: list, text: str) -> list:
+    """
+    The candidate's skills that literally appear in a piece of text (whole-word, case-insensitive).
+    Used when a posting lists no skills of its own - job APIs often return only a short snippet -
+    so the card can still show real evidence instead of nothing.
+    """
+    found = []
+    for skill in candidate_skills:
+        name = skill.strip()
+        if len(name) < 2:
+            continue
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", text, re.IGNORECASE):
+            found.append(name)
+    return found
+
+
 WEIGHTS = {
     "skill": 0.35,
     "experience": 0.25,
@@ -162,6 +179,16 @@ def calculate_match_score(candidate_profile, job: dict) -> dict:
         job.get("preferred_skills", []),
     )
 
+    # A posting with no skills of its own can't be scored or have gaps listed, but the
+    # candidate's skills that appear in its text are still worth showing.
+    job_lists_skills = bool(
+        job.get("required_skills") or job.get("skills_required") or job.get("preferred_skills")
+    )
+    if not job_lists_skills:
+        skill_result["matched_skills"] = find_skills_in_text(
+            candidate_profile.skills, f"{job.get('title', '')} {job.get('description', '')}"
+        )
+
     # --- Experience match (25%) ---
     exp_requirement = extract_experience_requirement(job.get("description", ""))
     exp_result = check_experience_compatibility(
@@ -205,6 +232,7 @@ def calculate_match_score(candidate_profile, job: dict) -> dict:
         "matched_skills": skill_result["matched_skills"],
         "missing_skills": skill_result["missing_skills"],
         "skill_match_score": skill_result["skill_match_score"],
+        "skills_listed": job_lists_skills,
         "experience_compatibility": exp_result["experience_compatibility"],
         "experience_gap": exp_result["experience_gap"],
         "experience_required": exp_requirement["raw_text"],
