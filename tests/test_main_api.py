@@ -152,3 +152,57 @@ def test_upload_rejects_too_little_text_without_calling_the_llm(client, monkeypa
     response = client.post("/api/resume/upload", data=data, content_type="multipart/form-data")
     assert response.status_code == 400
     assert "very little readable text" in response.get_json()["error"]
+
+
+# ---------- start-and-poll flow ----------
+
+def _wait_for_job(client, job_id, attempts=100):
+    import time
+    for _ in range(attempts):
+        body = client.get(f"/api/resume/status/{job_id}").get_json()
+        if body.get("status") != "running":
+            return body
+        time.sleep(0.02)
+    raise AssertionError("job never finished")
+
+
+def test_start_validation_errors_match_upload(client):
+    response = client.post("/api/resume/start", data={})
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "No file was sent"
+
+
+def test_start_then_status_returns_result(client, monkeypatch):
+    monkeypatch.setattr(
+        main_module, "extract_resume_text",
+        lambda path: {"success": True, "text": REALISTIC_TEXT},
+    )
+    monkeypatch.setattr(
+        main_module, "_analyze_resume_text",
+        lambda text: ({"status": "ok", "recommendations": []}, 200),
+    )
+    data = {"resume": (io.BytesIO(b"content"), "resume.pdf")}
+    response = client.post("/api/resume/start", data=data, content_type="multipart/form-data")
+    assert response.status_code == 202
+
+    body = _wait_for_job(client, response.get_json()["job_id"])
+    assert body == {"status": "done", "http_status": 200, "result": {"status": "ok", "recommendations": []}}
+
+
+def test_status_reports_pipeline_errors_with_their_http_status(client, monkeypatch):
+    monkeypatch.setattr(
+        main_module, "extract_resume_text",
+        lambda path: {"success": True, "text": REALISTIC_TEXT},
+    )
+    monkeypatch.setattr(main_module, "_analyze_resume_text", lambda text: ({"error": "agent failed"}, 502))
+    data = {"resume": (io.BytesIO(b"content"), "resume.pdf")}
+    job_id = client.post("/api/resume/start", data=data, content_type="multipart/form-data").get_json()["job_id"]
+
+    body = _wait_for_job(client, job_id)
+    assert body["http_status"] == 502
+    assert body["result"]["error"] == "agent failed"
+
+
+def test_status_unknown_job_returns_404(client):
+    response = client.get("/api/resume/status/does-not-exist")
+    assert response.status_code == 404

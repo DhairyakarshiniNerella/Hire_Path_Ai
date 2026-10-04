@@ -255,6 +255,46 @@ function createEl(tag, className, text) {
     return el;
 }
 
+// The analysis takes 1-2 minutes. One request held open that long gets cut by many networks,
+// so the backend returns a job id right away and we check on it with short requests.
+const POLL_INTERVAL_MS = 3000;
+const POLL_MAX_MS = 10 * 60 * 1000;
+const POLL_MAX_CONSECUTIVE_FAILURES = 5;
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Resolves to { ok, data }. Throws only if the backend can't be reached at all.
+async function analyzeResume(formData) {
+    const startResponse = await fetch(`${API_BASE_URL}/api/resume/start`, {
+        method: "POST",
+        body: formData,
+    });
+    const startData = await startResponse.json();
+    if (!startResponse.ok) return { ok: false, data: startData };
+
+    const deadline = Date.now() + POLL_MAX_MS;
+    let failures = 0;
+    while (Date.now() < deadline) {
+        await sleep(POLL_INTERVAL_MS);
+        let response, body;
+        try {
+            response = await fetch(`${API_BASE_URL}/api/resume/status/${startData.job_id}`);
+            body = await response.json();
+        } catch (error) {
+            // One dropped poll is harmless; give up only if the backend stays unreachable.
+            failures += 1;
+            if (failures >= POLL_MAX_CONSECUTIVE_FAILURES) throw error;
+            continue;
+        }
+        failures = 0;
+        if (!response.ok) return { ok: false, data: body };
+        if (body.status === "done") return { ok: body.http_status < 400, data: body.result };
+    }
+    return { ok: false, data: { error: "The analysis is taking too long. Please try again." } };
+}
+
 // True only for absolute http:// or https:// URLs (rejects javascript:, data:, file:, etc.).
 function isSafeHttpUrl(url) {
     try {
@@ -364,15 +404,11 @@ analyzeButton.addEventListener("click", async () => {
     formData.append("resume", selectedFile);
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/resume/upload`, {
-            method: "POST",
-            body: formData,
-        });
-        const data = await response.json();
+        const { ok, data } = await analyzeResume(formData);
 
         finishProgress();
 
-        if (!response.ok) {
+        if (!ok) {
             statusMessage.textContent = "Error: " + data.error;
             statusMessage.classList.remove("loading");
             statusMessage.classList.add("error");

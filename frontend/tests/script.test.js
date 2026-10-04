@@ -350,6 +350,9 @@ function clearFile() {
 }
 
 describe("analyze button click flow", () => {
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => vi.useRealTimers());
+
   it("shows an error and makes no request when no file is selected", async () => {
     clearFile();
     const fetchSpy = vi.fn();
@@ -365,34 +368,45 @@ describe("analyze button click flow", () => {
     expect(document.getElementById("status-message").classList.contains("error")).toBe(true);
   });
 
-  it("displays the profile and recommendations on a successful upload", async () => {
+  it("displays the profile and recommendations after starting and polling the analysis", async () => {
     selectFile();
-    vi.stubGlobal("fetch", () =>
-      fakeFetchResponse(true, {
-        status: "ok",
-        candidate_profile: {
-          name: "Jane Doe",
-          career_level: "Mid Level",
-          education: ["B.Tech CS"],
-          skills: ["Python"],
-          total_experience_years: 2,
-          projects: [],
-          target_roles: ["Backend Developer"],
-        },
-        recommendations: [
-          { title: "Backend Dev", company: "Acme", source: "Adzuna", match_score: 90, matched_skills: [], missing_skills: [], why_it_matches: "great fit", url: "#" },
-        ],
-      })
-    );
+    const result = {
+      status: "ok",
+      search_via: "mcp",
+      candidate_profile: {
+        name: "Jane Doe",
+        career_level: "Mid Level",
+        education: ["B.Tech CS"],
+        skills: ["Python"],
+        total_experience_years: 2,
+        projects: [],
+        target_roles: ["Backend Developer"],
+      },
+      recommendations: [
+        { title: "Backend Dev", company: "Acme", source: "Adzuna", match_score: 90, matched_skills: [], missing_skills: [], why_it_matches: "great fit", url: "#" },
+      ],
+    };
+    let polls = 0;
+    vi.stubGlobal("fetch", (url) => {
+      if (url.endsWith("/api/resume/start")) return fakeFetchResponse(true, { job_id: "abc" });
+      polls += 1;
+      return fakeFetchResponse(true, polls < 2
+        ? { status: "running" }
+        : { status: "done", http_status: 200, result });
+    });
 
     document.getElementById("analyze-btn").click();
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(3000);
 
     await vi.waitFor(() => {
       expect(document.getElementById("profile-name").textContent).toBe("Jane Doe");
     });
 
+    expect(polls).toBe(2);
     expect(document.getElementById("profile-section").classList.contains("hidden")).toBe(false);
     expect(document.querySelectorAll("#recommendations-section .job-card").length).toBe(1);
+    expect(document.getElementById("search-via-note").textContent).toContain("MCP server");
     expect(document.getElementById("status-message").textContent).toBe("");
     expect(document.getElementById("analyze-btn").disabled).toBe(false);
     expect(document.getElementById("analyze-btn").textContent).toBe("Analyze Resume →");
@@ -412,6 +426,40 @@ describe("analyze button click flow", () => {
 
     expect(document.getElementById("status-message").classList.contains("error")).toBe(true);
     expect(document.getElementById("analyze-btn").disabled).toBe(false);
+  });
+
+  it("shows the pipeline's error when the finished analysis failed", async () => {
+    selectFile();
+    vi.stubGlobal("fetch", (url) =>
+      url.endsWith("/api/resume/start")
+        ? fakeFetchResponse(true, { job_id: "abc" })
+        : fakeFetchResponse(true, { status: "done", http_status: 502, result: { error: "Job Search Agent failed" } })
+    );
+
+    document.getElementById("analyze-btn").click();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("status-message").textContent).toBe("Error: Job Search Agent failed");
+    });
+  });
+
+  it("keeps polling through a few dropped requests", async () => {
+    selectFile();
+    let polls = 0;
+    vi.stubGlobal("fetch", (url) => {
+      if (url.endsWith("/api/resume/start")) return fakeFetchResponse(true, { job_id: "abc" });
+      polls += 1;
+      if (polls <= 2) return Promise.reject(new Error("blip"));
+      return fakeFetchResponse(true, { status: "done", http_status: 200, result: { status: "ok", search_via: "mcp", candidate_profile: { name: "Jane Doe" }, recommendations: [] } });
+    });
+
+    document.getElementById("analyze-btn").click();
+    for (let i = 0; i < 3; i++) await vi.advanceTimersByTimeAsync(3000);
+
+    await vi.waitFor(() => {
+      expect(document.getElementById("profile-name").textContent).toBe("Jane Doe");
+    });
   });
 
   it("shows a connectivity message when the backend is unreachable", async () => {
