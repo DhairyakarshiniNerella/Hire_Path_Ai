@@ -151,4 +151,19 @@ def test_job_analysis_node_tolerates_some_failed_jobs(monkeypatch):
 
     result = job_analysis_node({"jobs": [{"title": "A"}, {"title": "B"}]})
 
-    assert len(result["analyzed_jobs"]) == 2
+    assert [j["title"] for j in result["analyzed_jobs"]] == ["B"]
+
+
+def test_job_analysis_node_never_passes_raw_api_errors_downstream(monkeypatch):
+    monkeypatch.setattr(workflow_module, "normalize_jobs", lambda jobs: jobs)
+    monkeypatch.setattr(workflow_module, "remove_duplicate_jobs", lambda jobs: jobs)
+    raw = "Error code: 429 - org_01abc https://console.groq.com/settings/billing"
+    monkeypatch.setattr(
+        workflow_module, "analyze_jobs",
+        lambda jobs: [{"title": "A", "analysis_error": raw}, {"title": "B"}],
+    )
+
+    result = job_analysis_node({"jobs": [{"title": "A"}, {"title": "B"}]})
+
+    assert "org_01abc" not in str(result)
+    assert "console.groq.com" not in str(result)

@@ -61,6 +61,14 @@ def job_analysis_node(state: WorkflowState) -> dict:
         if analyzed and len(failures) == len(analyzed):
             raise RuntimeError(failures[0])
 
+        # Partial failure: a job that couldn't be analyzed has no skills/education data, so ranking
+        # it would be guesswork - and its analysis_error holds the raw API error (org ID, billing
+        # URL), which must never reach the response. Log it, then drop those jobs.
+        for job in analyzed:
+            if job.get("analysis_error"):
+                print(f"[error] Job Analysis Agent skipped '{job.get('title')}': {job['analysis_error']}", flush=True)
+        analyzed = [job for job in analyzed if not job.get("analysis_error")]
+
         return {"analyzed_jobs": analyzed}
     except Exception as e:
         return _node_error("Job Analysis Agent", e)
