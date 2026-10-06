@@ -234,13 +234,36 @@ function displayProfile(profile) {
 }
 
 // Tells the user how the jobs were actually fetched (reported by the backend, not assumed).
-function displaySearchVia(searchVia) {
+const MCP_FALLBACK_REASONS = {
+    auth: "the MCP server rejected the access token",
+    server_waking_or_unavailable: "the MCP server was still waking up",
+    timeout: "the MCP server timed out",
+    unreachable: "the MCP server could not be reached",
+    not_configured: "the MCP connection is not configured",
+    bad_request: "the MCP server rejected the request",
+};
+
+// The checklist is revealed on a timer, so its job-source line is corrected once the backend has
+// said how the jobs were really fetched: a green check must never claim MCP when it fell back.
+function updateJobSourcesStep(searchVia, reason) {
+    const li = document.getElementById("agent-item-job_sources");
+    if (!li || searchVia !== "direct") return;
+    const detail = MCP_FALLBACK_REASONS[reason];
+    li.className = "agent-pending";
+    li.innerHTML = `<span class="agent-status">⚠</span> <span class="agent-icon">🌐</span> `
+        + `Jobs fetched directly from Adzuna, Jooble, Arbeitnow (MCP unavailable${detail ? `: ${detail}` : ""})`;
+}
+
+function displaySearchVia(searchVia, reason) {
     const note = document.getElementById("search-via-note");
     if (!note) return;
     if (searchVia === "mcp") {
         note.textContent = "🔌 Jobs were fetched through the HirePath MCP server (Model Context Protocol).";
     } else if (searchVia === "direct") {
-        note.textContent = "Jobs were fetched directly from the job APIs (the MCP server was unavailable).";
+        const detail = MCP_FALLBACK_REASONS[reason];
+        note.textContent = detail
+            ? `Jobs were fetched directly from the job APIs (the MCP server was unavailable: ${detail}).`
+            : "Jobs were fetched directly from the job APIs (the MCP server was unavailable).";
     } else {
         note.classList.add("hidden");
         return;
@@ -463,7 +486,8 @@ analyzeButton.addEventListener("click", async () => {
         statusMessage.textContent = "";
         statusMessage.classList.remove("loading");
         displayProfile(data.candidate_profile);
-        displaySearchVia(data.search_via);
+        updateJobSourcesStep(data.search_via, data.search_via_reason);
+        displaySearchVia(data.search_via, data.search_via_reason);
         displayRecommendations(data.recommendations);
 
     } catch (error) {

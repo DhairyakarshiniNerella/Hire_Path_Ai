@@ -855,7 +855,9 @@ def test_phase13_job_search_agent(monkeypatch):
 
         label = f"phase13 case {i}: mode={mode} mcp_fails={mcp_fails} queries={queries}"
         out = agent.search_jobs_for_candidate(CandidateProfile())
-        assert set(out) == {"search_queries", "jobs", "search_via"}, label
+        # search_via_reason appears only when MCP failed and the direct APIs were used instead
+        assert set(out) - {"search_via_reason"} == {"search_queries", "jobs", "search_via"}, label
+        assert ("search_via_reason" in out) == (out["search_via"] == "direct" and mode == "mcp" and bool(queries)), label
         assert out["search_via"] in ("mcp", "direct"), label
         assert out["search_queries"] == queries, label
         assert isinstance(out["jobs"], list), label

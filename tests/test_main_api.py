@@ -206,3 +206,30 @@ def test_status_reports_pipeline_errors_with_their_http_status(client, monkeypat
 def test_status_unknown_job_returns_404(client):
     response = client.get("/api/resume/status/does-not-exist")
     assert response.status_code == 404
+
+
+# ---------- diagnostics + request tagging ----------
+
+def test_diagnostics_is_hidden_without_a_configured_token(client, monkeypatch):
+    monkeypatch.delenv("DIAGNOSTICS_TOKEN", raising=False)
+    assert client.get("/api/diagnostics").status_code == 404
+    assert client.get("/api/diagnostics", headers={"X-Diagnostics-Token": ""}).status_code == 404
+
+
+def test_diagnostics_rejects_a_wrong_token_and_returns_no_secrets(client, monkeypatch):
+    monkeypatch.setenv("DIAGNOSTICS_TOKEN", "diag-token")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "mcp-secret-value")
+    monkeypatch.setattr(main_module, "check_mcp_connection", lambda deep=False: {"auth_and_handshake_ok": True})
+
+    assert client.get("/api/diagnostics", headers={"X-Diagnostics-Token": "nope"}).status_code == 404
+
+    response = client.get("/api/diagnostics", headers={"X-Diagnostics-Token": "diag-token"})
+    assert response.status_code == 200
+    assert response.get_json()["mcp"] == {"auth_and_handshake_ok": True}
+    assert "mcp-secret-value" not in response.get_data(as_text=True)
+
+
+def test_api_responses_are_never_cached_and_carry_a_request_id(client):
+    response = client.get("/api/health")
+    assert response.headers["Cache-Control"] == "no-store"
+    assert len(response.headers["X-Request-ID"]) == 8

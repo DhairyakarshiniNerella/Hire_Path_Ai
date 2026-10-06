@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import os
 import sys
 import threading
@@ -6,10 +7,19 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import requests
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+
+# Correlates every log line of one resume analysis (set by main.py). Never holds user data.
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+
+def log(message: str) -> None:
+    print(f"[job_search] [{request_id_var.get()}] {message}", flush=True)
+
 
 # backend/app/services/mcp_job_client.py -> repo root (the folder that contains mcp_server/)
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -120,18 +130,88 @@ async def _call_search_jobs(queries: list[str], location: str, limit: int) -> li
     return results
 
 
+# A request to a sleeping free-tier host can fail in ways that clear up on their own, so those
+# are retried. Auth/URL/request errors are configuration problems; retrying would only repeat them.
+MCP_MAX_ATTEMPTS = 3
+MCP_RETRY_BACKOFF_SECONDS = (5, 15)
+RETRYABLE_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+
+
+class MCPCallError(RuntimeError):
+    """An MCP call failed. `reason` is a short safe code the UI can show; `retryable` drives retries."""
+
+    def __init__(self, message: str, reason: str, retryable: bool, status: int | None = None):
+        super().__init__(message)
+        self.reason = reason
+        self.retryable = retryable
+        self.status = status
+
+
+def _leaf_exception(error: BaseException) -> BaseException:
+    while isinstance(error, BaseExceptionGroup) and error.exceptions:
+        error = error.exceptions[0]
+    return error
+
+
+def _classify(error: BaseException) -> MCPCallError:
+    """Turns whatever the MCP/HTTP libraries raised into an MCPCallError (never contains secrets)."""
+    leaf = _leaf_exception(error)
+    if isinstance(leaf, MCPCallError):
+        return leaf
+    text = _root_cause(error)
+    if isinstance(leaf, httpx.HTTPStatusError):
+        status = leaf.response.status_code
+        if status in (401, 403):
+            return MCPCallError(text, "auth", False, status)
+        if status in RETRYABLE_HTTP_STATUSES:
+            return MCPCallError(text, "server_waking_or_unavailable", True, status)
+        return MCPCallError(text, "bad_request", False, status)
+    if isinstance(leaf, (httpx.TimeoutException, asyncio.TimeoutError, TimeoutError)):
+        return MCPCallError(text, "timeout", True)
+    if isinstance(leaf, (httpx.TransportError, OSError)):
+        return MCPCallError(text, "unreachable", True)
+    return MCPCallError(text, "error", False)
+
+
+def _describe_endpoint() -> str:
+    """Safe-to-log description of where MCP calls go (never the token)."""
+    remote = _remote_server()
+    return remote[0] if remote else "local STDIO subprocess"
+
+
 def search_jobs_batch_via_mcp(queries: list[str], location: str = "", limit: int = 30) -> list[dict]:
     """
     Synchronous wrapper (the rest of HirePath is synchronous). Runs every query
     over a single MCP session. Returns one SearchResult dict per query, in order:
     {"source", "count", "jobs", "errors"}.
+
+    Every call opens its own connection, so one request never depends on another.
+    Transient failures (a sleeping host, timeouts, 502/503) are retried; auth and
+    request errors are raised immediately as MCPCallError.
     """
-    wake_remote_server()  # no-op unless MCP_SERVER_URL is set
     try:
-        return asyncio.run(_call_search_jobs(queries, location, limit))
-    except BaseExceptionGroup as group:
-        # The MCP library wraps failures in a TaskGroup error whose message hides the cause.
-        raise RuntimeError(_root_cause(group)) from None
+        endpoint = _describe_endpoint()
+    except RuntimeError as e:  # remote mode without a token
+        raise MCPCallError(str(e), "not_configured", False) from None
+    log(f"MCP request started: endpoint={endpoint}, queries={len(queries)}")
+
+    for attempt in range(1, MCP_MAX_ATTEMPTS + 1):
+        wake_remote_server()  # no-op unless MCP_SERVER_URL is set
+        started = time.monotonic()
+        try:
+            results = asyncio.run(_call_search_jobs(queries, location, limit))
+            log(f"MCP request completed: attempt={attempt}, {time.monotonic() - started:.1f}s")
+            return results
+        except BaseException as e:
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+            # The MCP library wraps failures in a TaskGroup error whose message hides the cause.
+            failure = _classify(e)
+            log(f"MCP request failed: attempt={attempt}/{MCP_MAX_ATTEMPTS}, reason={failure.reason}, "
+                f"status={failure.status}, error={failure}, retryable={failure.retryable}")
+            if not failure.retryable or attempt == MCP_MAX_ATTEMPTS:
+                raise failure from None
+            time.sleep(MCP_RETRY_BACKOFF_SECONDS[min(attempt - 1, len(MCP_RETRY_BACKOFF_SECONDS) - 1)])
 
 
 def _root_cause(error: BaseException) -> str:
@@ -144,3 +224,43 @@ def _root_cause(error: BaseException) -> str:
 def search_jobs_via_mcp(query: str, location: str = "", limit: int = 30) -> dict:
     """Single-query convenience wrapper around the batch call."""
     return search_jobs_batch_via_mcp([query], location, limit)[0]
+
+
+def check_mcp_connection(deep: bool = False) -> dict:
+    """
+    Safe, server-side MCP health check for the diagnostics endpoint. Proves the whole chain:
+    /health, authentication, the MCP handshake and the tool list; with deep=True it also
+    runs a real search_jobs call. Returns only booleans and short codes - never secrets.
+    """
+    report = {"mode": "remote" if os.environ.get("MCP_SERVER_URL", "").strip() else "stdio",
+              "url_configured": bool(os.environ.get("MCP_SERVER_URL", "").strip()),
+              "token_configured": bool(os.environ.get("MCP_AUTH_TOKEN", "").strip()),
+              "health_ok": None, "auth_and_handshake_ok": False, "search_jobs_ok": None, "error": None}
+    try:
+        _describe_endpoint()
+    except RuntimeError as e:
+        report["error"] = {"reason": "not_configured", "detail": str(e)}
+        return report
+    if report["url_configured"]:
+        report["health_ok"] = wake_remote_server(timeout=30)
+
+    async def probe() -> bool:
+        async with _open_streams() as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools = {tool.name for tool in (await session.list_tools()).tools}
+                if "search_jobs" not in tools:
+                    raise MCPCallError("search_jobs tool is missing", "error", False)
+                if deep:
+                    result = await session.call_tool("search_jobs", {"query": "Python Developer", "limit": 1})
+                    report["search_jobs_ok"] = not result.isError
+        return True
+
+    try:
+        report["auth_and_handshake_ok"] = asyncio.run(probe())
+    except BaseException as e:
+        if isinstance(e, (KeyboardInterrupt, SystemExit)):
+            raise
+        failure = _classify(e)
+        report["error"] = {"reason": failure.reason, "status": failure.status, "detail": str(failure)}
+    return report

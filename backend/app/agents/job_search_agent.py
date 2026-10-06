@@ -6,7 +6,7 @@ from app.models.profile import CandidateProfile
 from app.tools.adzuna_tool import search_adzuna_jobs
 from app.tools.jooble_tool import search_jooble_jobs
 from app.tools.arbeitnow_tool import search_arbeitnow_jobs
-from app.services.mcp_job_client import search_jobs_batch_via_mcp, search_jobs_via_mcp
+from app.services.mcp_job_client import MCPCallError, log, search_jobs_batch_via_mcp, search_jobs_via_mcp
 from app.services.token_tracker import log_usage
 from app.services.groq_client import build_structured_llm
 
@@ -103,7 +103,7 @@ def search_all_sources(query: str, location: str = "") -> List[dict]:
         try:
             return search_via_mcp(query, location)
         except Exception as e:
-            print(f"[job_search] MCP unavailable ({e}); falling back to direct APIs", flush=True)
+            log(f"MCP fallback activated: {e}")
 
     return search_all_sources_direct(query, location)
 
@@ -157,9 +157,10 @@ def search_jobs_for_candidate(candidate_profile: CandidateProfile, location: str
                 all_jobs.extend(_jobs_from_mcp_result(query, result))
             return {"search_queries": queries, "jobs": all_jobs, "search_via": "mcp"}
         except Exception as e:
-            print(f"[job_search] MCP unavailable ({e}); falling back to direct APIs", flush=True)
+            reason = e.reason if isinstance(e, MCPCallError) else "error"
+            log(f"MCP fallback activated (reason={reason}): {e}")
             all_jobs = [job for query in queries for job in search_all_sources_direct(query, location)]
-            return {"search_queries": queries, "jobs": all_jobs, "search_via": "direct"}
+            return {"search_queries": queries, "jobs": all_jobs, "search_via": "direct", "search_via_reason": reason}
 
     for query in queries:
         all_jobs.extend(search_all_sources(query, location=location))

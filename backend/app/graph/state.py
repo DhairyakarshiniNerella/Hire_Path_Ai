@@ -18,6 +18,7 @@ class WorkflowState(TypedDict):
     search_queries: List[str]
     jobs: List[dict]  # raw + normalized job postings from Adzuna/Jooble
     search_via: Optional[str]  # "mcp" if jobs came through the MCP server, else "direct"
+    search_via_reason: Optional[str]  # short safe code for why MCP was skipped (auth, timeout, ...)
 
     # Filled in by the Job Analysis Agent
     analyzed_jobs: List[dict]  # jobs with extracted requirements (skills, experience, etc.)

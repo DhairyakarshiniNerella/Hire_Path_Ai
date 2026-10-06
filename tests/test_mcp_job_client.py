@@ -81,6 +81,7 @@ def test_batch_search_reports_the_root_cause_not_the_taskgroup_message(monkeypat
         raise ExceptionGroup("unhandled errors in a TaskGroup", [ConnectionError("server unreachable")])
 
     monkeypatch.setattr(mcp_job_client, "_call_search_jobs", boom)
+    monkeypatch.setattr(mcp_job_client.time, "sleep", lambda s: None)
 
     with pytest.raises(RuntimeError, match="ConnectionError: server unreachable"):
         mcp_job_client.search_jobs_batch_via_mcp(["x"])
@@ -140,3 +141,81 @@ def test_batch_search_wakes_the_server_before_searching(monkeypatch):
     monkeypatch.setattr(mcp_job_client, "_call_search_jobs", fake_call)
     mcp_job_client.search_jobs_batch_via_mcp(["x"])
     assert order == ["wake", "search"]
+
+
+# ---------- retries: transient failures yes, auth/config failures no ----------
+
+import httpx
+
+
+def _status_error(status):
+    request = httpx.Request("POST", "https://x.onrender.com/mcp")
+    return httpx.HTTPStatusError(f"{status}", request=request, response=httpx.Response(status, request=request))
+
+
+def _flaky_call(monkeypatch, errors):
+    """Makes _call_search_jobs raise each error in turn, then succeed. Returns the call counter."""
+    calls = {"n": 0}
+    sleeps = []
+
+    async def fake_call(queries, location, limit):
+        calls["n"] += 1
+        if calls["n"] <= len(errors):
+            raise ExceptionGroup("unhandled errors in a TaskGroup", [errors[calls["n"] - 1]])
+        return [{"jobs": []}]
+
+    monkeypatch.setattr(mcp_job_client, "_call_search_jobs", fake_call)
+    monkeypatch.setattr(mcp_job_client, "wake_remote_server", lambda: None)
+    monkeypatch.setattr(mcp_job_client.time, "sleep", sleeps.append)
+    return calls, sleeps
+
+
+def test_transient_failures_are_retried_with_backoff_then_succeed(monkeypatch):
+    calls, sleeps = _flaky_call(monkeypatch, [_status_error(503), httpx.ConnectError("down")])
+
+    assert mcp_job_client.search_jobs_batch_via_mcp(["x"]) == [{"jobs": []}]
+    assert calls["n"] == 3
+    assert sleeps == [5, 15]
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+def test_auth_and_request_errors_are_not_retried(monkeypatch, status):
+    calls, sleeps = _flaky_call(monkeypatch, [_status_error(status)] * 3)
+
+    with pytest.raises(mcp_job_client.MCPCallError) as err:
+        mcp_job_client.search_jobs_batch_via_mcp(["x"])
+
+    assert calls["n"] == 1 and sleeps == []
+    assert err.value.status == status
+    assert err.value.reason == ("auth" if status in (401, 403) else "bad_request")
+
+
+def test_gives_up_after_the_last_attempt_and_reports_the_reason(monkeypatch):
+    calls, _ = _flaky_call(monkeypatch, [_status_error(502)] * 5)
+
+    with pytest.raises(mcp_job_client.MCPCallError) as err:
+        mcp_job_client.search_jobs_batch_via_mcp(["x"])
+
+    assert calls["n"] == mcp_job_client.MCP_MAX_ATTEMPTS
+    assert err.value.reason == "server_waking_or_unavailable"
+
+
+def test_failure_logs_never_contain_the_token(monkeypatch, capsys):
+    monkeypatch.setenv("MCP_SERVER_URL", "https://x.onrender.com")
+    monkeypatch.setenv("MCP_AUTH_TOKEN", "super-secret-token-value")
+    _flaky_call(monkeypatch, [_status_error(401)])
+
+    with pytest.raises(mcp_job_client.MCPCallError):
+        mcp_job_client.search_jobs_batch_via_mcp(["x"])
+
+    out = capsys.readouterr().out
+    assert "super-secret-token-value" not in out
+    assert "MCP request started" in out and "MCP request failed" in out
+
+
+def test_each_call_opens_its_own_connection(monkeypatch):
+    """No shared client: two calls must each go through _call_search_jobs on their own."""
+    calls, _ = _flaky_call(monkeypatch, [])
+    mcp_job_client.search_jobs_batch_via_mcp(["a"])
+    mcp_job_client.search_jobs_batch_via_mcp(["b"])
+    assert calls["n"] == 2

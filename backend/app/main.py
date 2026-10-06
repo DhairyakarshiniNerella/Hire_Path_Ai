@@ -1,13 +1,14 @@
+import hmac
 import os
 import threading
 import time
 import uuid
-from flask import Flask, request
+from flask import Flask, g, request
 from flask_cors import CORS
 from app.tools.resume_parser import extract_resume_text
 from app.graph.workflow import workflow
 from app.services.token_tracker import reset_usage, get_usage_summary
-from app.services.mcp_job_client import wake_remote_server_in_background
+from app.services.mcp_job_client import check_mcp_connection, log, request_id_var, wake_remote_server_in_background
 
 # Create the Flask application
 app = Flask(__name__)
@@ -17,8 +18,39 @@ app = Flask(__name__)
 MAX_UPLOAD_MB = 15
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
-# Allow the browser frontend to call this backend
-CORS(app)
+# Allow the browser frontend to call this backend. Set FRONTEND_ORIGINS to the exact deployed
+# frontend origin(s), comma-separated (e.g. https://hirepath-ai.vercel.app). The MCP server is
+# never called from the browser, so CORS has no effect on how jobs are fetched.
+_frontend_origins = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS", "").split(",") if o.strip()]
+if _frontend_origins:
+    CORS(app, origins=_frontend_origins)
+else:
+    print("[startup] FRONTEND_ORIGINS is not set: allowing any origin. Set it in production.", flush=True)
+    CORS(app)
+
+# Which build is running (Render sets RENDER_GIT_COMMIT on every deploy).
+BACKEND_VERSION = (os.getenv("RENDER_GIT_COMMIT") or "dev")[:7]
+
+
+@app.before_request
+def _tag_request():
+    """Gives every request an id and logs the safe parts of it so devices can be compared in the logs."""
+    g.request_id = uuid.uuid4().hex[:8]
+    request_id_var.set(g.request_id)
+    if request.method == "POST":
+        log(f"frontend request received: {request.method} {request.path} "
+            f"origin={request.headers.get('Origin', '-')} host={request.host} "
+            f"scheme={request.headers.get('X-Forwarded-Proto', request.scheme)} "
+            f"user_agent={request.headers.get('User-Agent', '-')[:120]!r}")
+
+
+@app.after_request
+def _no_cache_api_responses(response):
+    # Status polls and results must never be answered from a phone/carrier/browser cache.
+    if request.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Request-ID"] = getattr(g, "request_id", "-")
+    return response
 
 # Folder where uploaded resumes will be temporarily saved
 UPLOAD_FOLDER = "uploads"
@@ -43,6 +75,27 @@ def is_allowed_file(filename):
 @app.route("/api/health")
 def health():
     return {"status": "ok", "message": "HirePath AI backend is running"}
+
+
+@app.route("/api/diagnostics")
+def diagnostics():
+    """
+    Server-side check of the whole backend -> MCP chain (health, auth, handshake, tool list;
+    add ?deep=1 for a real search). Returns booleans and short codes only, never secrets.
+    Disabled (404) unless DIAGNOSTICS_TOKEN is set; send it as the X-Diagnostics-Token header.
+    """
+    expected = os.getenv("DIAGNOSTICS_TOKEN", "")
+    supplied = request.headers.get("X-Diagnostics-Token", "")
+    if not expected or not hmac.compare_digest(supplied.encode(), expected.encode()):
+        return {"error": "Not found"}, 404
+    mcp = check_mcp_connection(deep=request.args.get("deep") == "1")
+    return {
+        "backend": "ok",
+        "backend_version": BACKEND_VERSION,
+        "job_search_mode": os.getenv("JOB_SEARCH_MODE", "mcp").lower(),
+        "frontend_origins_restricted": bool(_frontend_origins),
+        "mcp": mcp,
+    }
 
 
 def _read_resume_upload():
@@ -128,6 +181,8 @@ def _analyze_resume_text(resume_text):
         "candidate_profile": candidate_profile.model_dump(),
         "search_queries": final_state.get("search_queries", []),
         "search_via": final_state.get("search_via"),
+        "search_via_reason": final_state.get("search_via_reason"),
+        "backend_version": BACKEND_VERSION,
         "recommendations": final_state.get("recommendations", []),
         "token_usage": get_usage_summary(),
     }, 200
@@ -165,7 +220,8 @@ def _prune_old_jobs():
             del _jobs[job_id]
 
 
-def _run_job(job_id, resume_text):
+def _run_job(job_id, resume_text, request_id="-"):
+    request_id_var.set(request_id)  # a new thread starts with an empty context
     try:
         body, status_code = _analyze_resume_text(resume_text)
     except Exception as e:  # never leave a job stuck in "running"
@@ -184,7 +240,7 @@ def start_resume_analysis():
     job_id = uuid.uuid4().hex
     with _jobs_lock:
         _jobs[job_id] = {"state": "running", "created": time.time()}
-    threading.Thread(target=_run_job, args=(job_id, text), daemon=True).start()
+    threading.Thread(target=_run_job, args=(job_id, text, g.request_id), daemon=True).start()
     return {"job_id": job_id}, 202
 
 

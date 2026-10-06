@@ -37,7 +37,10 @@ def job_search_node(state: WorkflowState) -> dict:
     """Graph node wrapper around the Job Search Agent."""
     try:
         result = search_jobs_for_candidate(state["candidate_profile"])
-        return {"search_queries": result["search_queries"], "jobs": result["jobs"], "search_via": result["search_via"]}
+        update = {"search_queries": result["search_queries"], "jobs": result["jobs"], "search_via": result["search_via"]}
+        if "search_via_reason" in result:  # only present when MCP failed and the direct APIs were used
+            update["search_via_reason"] = result["search_via_reason"]
+        return update
     except Exception as e:
         return _node_error("Job Search Agent", e)
 
